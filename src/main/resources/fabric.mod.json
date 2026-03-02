@@ -1,0 +1,38 @@
+{
+	"schemaVersion": 1,
+	"id": "fuji",
+	"version": "1.0.0",
+	"name": "fuji",
+	"description": "Skypixel cheat client",
+	"authors": [
+		"The GOAT, Eden Fujikaze"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/fuji/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"at.fuji.Fuji"
+		],
+		"client": [
+			"at.fuji.FujiClient"
+		]
+	},
+	"mixins": [
+		"fuji.mixins.json",
+		{
+			"config": "fuji.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.18.4",
+		"minecraft": "~1.21.10",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
