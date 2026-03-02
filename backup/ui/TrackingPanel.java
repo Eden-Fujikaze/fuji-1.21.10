@@ -2,13 +2,14 @@ package at.fuji.ui;
 
 import at.fuji.target.TargetConfig;
 import at.fuji.target.TargetManager;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.network.chat.Component;
+
 import java.util.ArrayList;
 import java.util.List;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.text.Text;
 
 public class TrackingPanel implements Sidebar {
 
@@ -34,8 +35,8 @@ public class TrackingPanel implements Sidebar {
     private int editingRow = -1;
     private boolean addRowVisible = false;
 
-    private TextFieldWidget nameBox, radiusBox;
-    private TextFieldWidget editNameBox, editRadiusBox;
+    private EditBox nameBox, radiusBox;
+    private EditBox editNameBox, editRadiusBox;
 
     private final List<Object> managedWidgets = new ArrayList<>();
 
@@ -62,18 +63,18 @@ public class TrackingPanel implements Sidebar {
     @Override
     public void clearWidgets() {
         managedWidgets.forEach(w -> {
-            if (w instanceof net.minecraft.client.gui.widget.ClickableWidget aw)
+            if (w instanceof net.minecraft.client.gui.components.AbstractWidget aw)
                 parent.removeWidget(aw);
         });
         managedWidgets.clear();
     }
 
-    private void addBtn(ButtonWidget btn) {
+    private void addBtn(Button btn) {
         managedWidgets.add(btn);
         parent.addWidget(btn);
     }
 
-    private void addBox(TextFieldWidget box) {
+    private void addBox(EditBox box) {
         managedWidgets.add(box);
         parent.addWidget(box);
     }
@@ -90,22 +91,22 @@ public class TrackingPanel implements Sidebar {
             int btnY = rowY + (ROW_HEIGHT - 14) / 2;
 
             if (editingRow == i) {
-                editNameBox = new TextFieldWidget(MinecraftClient.getInstance().textRenderer,
-                        px + PADDING + 12, btnY - 1, 100, 14, Text.empty());
-                editNameBox.setText(cfg.mobName);
+                editNameBox = new EditBox(Minecraft.getInstance().font,
+                        px + PADDING + 12, btnY - 1, 100, 14, Component.empty());
+                editNameBox.setValue(cfg.mobName);
                 editNameBox.setMaxLength(32);
                 addBox(editNameBox);
 
-                editRadiusBox = new TextFieldWidget(MinecraftClient.getInstance().textRenderer,
-                        px + PADDING + 120, btnY - 1, 48, 14, Text.empty());
-                editRadiusBox.setText(String.valueOf((int) cfg.radius));
+                editRadiusBox = new EditBox(Minecraft.getInstance().font,
+                        px + PADDING + 120, btnY - 1, 48, 14, Component.empty());
+                editRadiusBox.setValue(String.valueOf((int) cfg.radius));
                 editRadiusBox.setMaxLength(5);
                 addBox(editRadiusBox);
 
                 addBtn(styledButton("✔", px + PADDING + 176, btnY, 20, 14, btn -> {
-                    cfg.mobName = editNameBox.getText();
+                    cfg.mobName = editNameBox.getValue();
                     try {
-                        cfg.radius = Float.parseFloat(editRadiusBox.getText());
+                        cfg.radius = Float.parseFloat(editRadiusBox.getValue());
                     } catch (NumberFormatException ignored) {
                     }
                     editingRow = -1;
@@ -127,13 +128,13 @@ public class TrackingPanel implements Sidebar {
             int col2 = px + 220;
             addBtn(styledButton(cfg.waypointEnabled ? "WP ●" : "WP ○", col2, btnY, 52, 14, btn -> {
                 TargetManager.toggleWaypoint(cfg.mobName);
-                btn.setMessage(Text.literal(cfg.waypointEnabled ? "WP ●" : "WP ○"));
+                btn.setMessage(Component.literal(cfg.waypointEnabled ? "WP ●" : "WP ○"));
             }));
 
             int col3 = col2 + 58;
             addBtn(styledButton(cfg.tracerEnabled ? "TR ●" : "TR ○", col3, btnY, 52, 14, btn -> {
                 TargetManager.toggleTracer(cfg.mobName);
-                btn.setMessage(Text.literal(cfg.tracerEnabled ? "TR ●" : "TR ○"));
+                btn.setMessage(Component.literal(cfg.tracerEnabled ? "TR ●" : "TR ○"));
             }));
 
             int col4 = col3 + 150;
@@ -159,25 +160,25 @@ public class TrackingPanel implements Sidebar {
         // Footer
         int footerY = py + ph - FOOTER_H;
         if (addRowVisible) {
-            nameBox = new TextFieldWidget(MinecraftClient.getInstance().textRenderer,
-                    px + PADDING, footerY + 12, 140, 16, Text.empty());
-            nameBox.setPlaceholder(Text.literal("Mob name..."));
+            nameBox = new EditBox(Minecraft.getInstance().font,
+                    px + PADDING, footerY + 12, 140, 16, Component.empty());
+            nameBox.setHint(Component.literal("Mob name..."));
             nameBox.setMaxLength(32);
             addBox(nameBox);
 
-            radiusBox = new TextFieldWidget(MinecraftClient.getInstance().textRenderer,
-                    px + PADDING + 148, footerY + 12, 60, 16, Text.empty());
-            radiusBox.setPlaceholder(Text.literal("Radius..."));
-            radiusBox.setText("150");
+            radiusBox = new EditBox(Minecraft.getInstance().font,
+                    px + PADDING + 148, footerY + 12, 60, 16, Component.empty());
+            radiusBox.setHint(Component.literal("Radius..."));
+            radiusBox.setValue("150");
             radiusBox.setMaxLength(5);
             addBox(radiusBox);
 
             addBtn(styledButton("ADD", px + PADDING + 216, footerY + 13, 36, 14, btn -> {
-                String name = nameBox.getText().trim();
+                String name = nameBox.getValue().trim();
                 if (!name.isEmpty()) {
                     float radius = 150;
                     try {
-                        radius = Float.parseFloat(radiusBox.getText());
+                        radius = Float.parseFloat(radiusBox.getValue());
                     } catch (NumberFormatException ignored) {
                     }
                     TargetManager.addTarget(name, true, true, radius);
@@ -201,22 +202,22 @@ public class TrackingPanel implements Sidebar {
     }
 
     @Override
-    public void render(DrawContext gfx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics gfx, int mouseX, int mouseY, float delta) {
         // Panel header
         gfx.fill(px, py, px + pw, py + HEADER_H, 0xFF0A0A0F);
         gfx.fill(px, py + HEADER_H - 1, px + pw, py + HEADER_H, COL_BORDER);
-        gfx.drawText(MinecraftClient.getInstance().textRenderer, "TRACKING",
+        gfx.drawString(Minecraft.getInstance().font, "TRACKING",
                 px + PADDING, py + (HEADER_H - 8) / 2, COL_ACCENT, false);
-        gfx.drawText(MinecraftClient.getInstance().textRenderer,
+        gfx.drawString(Minecraft.getInstance().font,
                 TargetManager.targets.size() + " TARGETS",
                 px + PADDING + 70, py + (HEADER_H - 8) / 2, COL_TEXT_DIM, false);
 
         // Column headers
         int chY = py + HEADER_H + 2;
-        gfx.drawText(MinecraftClient.getInstance().textRenderer, "MOB", px + PADDING + 44, chY, COL_TEXT_DIM, false);
-        gfx.drawText(MinecraftClient.getInstance().textRenderer, "WAYPOINT", px + 220, chY, COL_TEXT_DIM, false);
-        gfx.drawText(MinecraftClient.getInstance().textRenderer, "TRACER", px + 278, chY, COL_TEXT_DIM, false);
-        gfx.drawText(MinecraftClient.getInstance().textRenderer, "RADIUS", px + 340, chY, COL_TEXT_DIM, false);
+        gfx.drawString(Minecraft.getInstance().font, "MOB", px + PADDING + 44, chY, COL_TEXT_DIM, false);
+        gfx.drawString(Minecraft.getInstance().font, "WAYPOINT", px + 220, chY, COL_TEXT_DIM, false);
+        gfx.drawString(Minecraft.getInstance().font, "TRACER", px + 278, chY, COL_TEXT_DIM, false);
+        gfx.drawString(Minecraft.getInstance().font, "RADIUS", px + 340, chY, COL_TEXT_DIM, false);
 
         // Rows
         List<TargetConfig> targets = TargetManager.targets;
@@ -238,10 +239,10 @@ public class TrackingPanel implements Sidebar {
                     px + PADDING + 5, rowY + ROW_HEIGHT / 2 + 3, dotColor);
 
             if (editingRow != i) {
-                gfx.drawText(MinecraftClient.getInstance().textRenderer,
+                gfx.drawString(Minecraft.getInstance().font,
                         cfg.mobName.toUpperCase(),
                         px + PADDING + 44, rowY + (ROW_HEIGHT - 8) / 2, COL_TEXT, false);
-                gfx.drawText(MinecraftClient.getInstance().textRenderer,
+                gfx.drawString(Minecraft.getInstance().font,
                         (int) cfg.radius + "m",
                         px + 344, rowY + (ROW_HEIGHT - 8) / 2, COL_CYAN, false);
             }
@@ -253,7 +254,7 @@ public class TrackingPanel implements Sidebar {
         gfx.fill(px, py + ph - FOOTER_H, px + pw, py + ph - FOOTER_H + 1, COL_BORDER);
     }
 
-    private ButtonWidget styledButton(String label, int x, int y, int w, int h, ButtonWidget.PressAction onPress) {
-        return ButtonWidget.builder(Text.literal(label), onPress).dimensions(x, y, w, h).build();
+    private Button styledButton(String label, int x, int y, int w, int h, Button.OnPress onPress) {
+        return Button.builder(Component.literal(label), onPress).bounds(x, y, w, h).build();
     }
 }

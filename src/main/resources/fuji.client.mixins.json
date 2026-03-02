@@ -3,7 +3,7 @@
   "package": "at.fuji.mixin.client",
   "compatibilityLevel": "JAVA_17",
   "client": [
-    "ClientGamePacketListenerMixin"
+    "SidebarFullReaderMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -8,10 +8,11 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(ClientPacketListener.class)
+@Mixin(ClientPlayNetworkHandler.class)
 public class ClientGamePacketListenerMixin {
-    @Inject(method = "onSetScore(Lnet/minecraft/network/protocol/game/ClientboundSetScorePacket;)V", at = @At("HEAD"))
-    private void onSetScore(ClientboundSetScorePacket packet, CallbackInfo ci) {
+    @Inject(method = "onScoreboardScoreUpdate(Lnet/minecraft/network/packet/s2c/play/ScoreboardScoreUpdateS2CPacket;)V", at = @At("HEAD"))
+    private void onScoreboardScoreUpdate(net.minecraft.network.packet.s2c.play.ScoreboardScoreUpdateS2CPacket packet,
+            CallbackInfo ci) {
         ScoreboardUtil.handlePacket(packet);
     }
 }

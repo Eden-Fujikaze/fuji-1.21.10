@@ -2,42 +2,42 @@ package at.fuji.render;
 
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.platform.DepthTestFunction;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.RenderStateShard;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 
 import java.util.OptionalDouble;
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.RenderPhase;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.math.Vec3d;
 
 public class Waypoint {
 
     private static final float R = 1.0f, G = 0.0f, B = 1.0f, A = 1.0f;
 
     private static final RenderPipeline LINES_NO_DEPTH = RenderPipelines.register(
-            RenderPipeline.builder(RenderPipelines.RENDERTYPE_LINES_SNIPPET)
+            RenderPipeline.builder(RenderPipelines.LINES_SNIPPET)
                     .withLocation("pipeline/fuji_waypoint_lines")
                     .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
                     .withDepthWrite(false)
                     .build());
 
-    private static final RenderLayer WAYPOINT_RENDER_TYPE = RenderLayer.of(
+    private static final RenderType WAYPOINT_RENDER_TYPE = RenderType.create(
             "fuji_waypoint_lines",
             1536,
             LINES_NO_DEPTH,
-            RenderLayer.MultiPhaseParameters.builder()
-                    .lineWidth(new RenderPhase.LineWidth(OptionalDouble.empty()))
-                    .layering(RenderPhase.VIEW_OFFSET_Z_LAYERING)
-                    .target(RenderPhase.ITEM_ENTITY_TARGET)
-                    .build(false));
+            RenderType.CompositeState.builder()
+                    .setLineState(new RenderStateShard.LineStateShard(OptionalDouble.empty()))
+                    .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
+                    .setOutputState(RenderStateShard.ITEM_ENTITY_TARGET)
+                    .createCompositeState(false));
 
-    public static void drawWaypoint(MatrixStack poseStack, Vec3d targetPos, Vec3d cameraPos,
-            VertexConsumerProvider bufferSource) {
+    public static void drawWaypoint(PoseStack poseStack, Vec3 targetPos, Vec3 cameraPos,
+            MultiBufferSource bufferSource) {
 
-        poseStack.push();
+        poseStack.pushPose();
 
         // Translate to the block position (bottom-northwest corner, like a real block)
         poseStack.translate(
@@ -45,7 +45,7 @@ public class Waypoint {
                 targetPos.y - cameraPos.y,
                 targetPos.z - cameraPos.z);
 
-        Matrix4f matrix = poseStack.peek().getPositionMatrix();
+        Matrix4f matrix = poseStack.last().pose();
         VertexConsumer lines = bufferSource.getBuffer(WAYPOINT_RENDER_TYPE);
 
         // 8 corners of a 1x1x1 cube
@@ -67,7 +67,7 @@ public class Waypoint {
         addLine(lines, matrix, 1, 0, 1, 1, 1, 1); // corner ++
         addLine(lines, matrix, 0, 0, 1, 0, 1, 1); // corner -+
 
-        poseStack.pop();
+        poseStack.popPose();
     }
 
     private static void addLine(VertexConsumer lines, Matrix4f matrix,
@@ -79,7 +79,7 @@ public class Waypoint {
         if (len == 0)
             len = 1;
 
-        lines.vertex(matrix, x1, y1, z1).color(R, G, B, A).normal(dx / len, dy / len, dz / len);
-        lines.vertex(matrix, x2, y2, z2).color(R, G, B, A).normal(dx / len, dy / len, dz / len);
+        lines.addVertex(matrix, x1, y1, z1).setColor(R, G, B, A).setNormal(dx / len, dy / len, dz / len);
+        lines.addVertex(matrix, x2, y2, z2).setColor(R, G, B, A).setNormal(dx / len, dy / len, dz / len);
     }
 }

@@ -1,6 +1,6 @@
 package at.fuji.ui;
 
-import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.GuiGraphics;
 
 public interface Sidebar {
     String getLabel();
@@ -9,7 +9,7 @@ public interface Sidebar {
 
     void init(FujiScreen parent, int panelX, int panelY, int panelW, int panelH);
 
-    void render(DrawContext gfx, int mouseX, int mouseY, float delta);
+    void render(GuiGraphics gfx, int mouseX, int mouseY, float delta);
 
     void clearWidgets();
 }

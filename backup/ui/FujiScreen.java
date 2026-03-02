@@ -1,11 +1,12 @@
 package at.fuji.ui;
 
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
+
 import java.util.ArrayList;
 import java.util.List;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.Text;
 
 public class FujiScreen extends Screen {
 
@@ -27,22 +28,22 @@ public class FujiScreen extends Screen {
 
     private final List<Sidebar> categories = new ArrayList<>();
     private int selectedCategory = 0;
-    private final List<ButtonWidget> sidebarButtons = new ArrayList<>();
+    private final List<Button> sidebarButtons = new ArrayList<>();
 
     public FujiScreen() {
-        super(Text.literal("Fuji"));
+        super(Component.literal("Fuji"));
         categories.add(new TrackingPanel());
         // Future panels:
         // categories.add(new ScoreboardPanel());
         // categories.add(new SettingsPanel());
     }
 
-    public void addWidget(net.minecraft.client.gui.widget.ClickableWidget widget) {
-        this.addDrawableChild(widget);
+    public void addWidget(net.minecraft.client.gui.components.AbstractWidget widget) {
+        this.addRenderableWidget(widget);
     }
 
-    public void removeWidget(net.minecraft.client.gui.widget.ClickableWidget widget) {
-        this.remove((net.minecraft.client.gui.Element) widget);
+    public void removeWidget(net.minecraft.client.gui.components.AbstractWidget widget) {
+        this.removeWidget((net.minecraft.client.gui.components.events.GuiEventListener) widget);
     }
 
     @Override
@@ -53,7 +54,7 @@ public class FujiScreen extends Screen {
     }
 
     private void rebuildAll() {
-        this.clearChildren();
+        this.clearWidgets();
         sidebarButtons.clear();
 
         // Sidebar buttons
@@ -62,14 +63,14 @@ public class FujiScreen extends Screen {
             Sidebar cat = categories.get(i);
             int btnY = sy + TOP_BAR_H + 12 + i * 28;
 
-            ButtonWidget btn = ButtonWidget.builder(Text.literal(cat.getLabel()), b -> {
+            Button btn = Button.builder(Component.literal(cat.getLabel()), b -> {
                 categories.get(selectedCategory).clearWidgets();
                 selectedCategory = idx;
                 rebuildAll();
-            }).dimensions(sx + 6, btnY, SIDEBAR_W - 12, 20).build();
+            }).bounds(sx + 6, btnY, SIDEBAR_W - 12, 20).build();
 
             sidebarButtons.add(btn);
-            this.addDrawableChild(btn);
+            this.addRenderableWidget(btn);
         }
 
         // Init active panel in content area
@@ -81,7 +82,7 @@ public class FujiScreen extends Screen {
     }
 
     @Override
-    public void render(DrawContext gfx, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics gfx, int mouseX, int mouseY, float delta) {
         // Backdrop
         gfx.fill(0, 0, this.width, this.height, 0xBB050508);
 
@@ -99,8 +100,8 @@ public class FujiScreen extends Screen {
         gfx.fill(sx, sy, sx + SCREEN_WIDTH, sy + 2, COL_ACCENT);
 
         // Title
-        gfx.drawText(this.textRenderer, "FUJI", sx + 12, sy + (TOP_BAR_H - 8) / 2, COL_ACCENT, false);
-        gfx.drawText(this.textRenderer, "//  " + categories.get(selectedCategory).getLabel(),
+        gfx.drawString(this.font, "FUJI", sx + 12, sy + (TOP_BAR_H - 8) / 2, COL_ACCENT, false);
+        gfx.drawString(this.font, "//  " + categories.get(selectedCategory).getLabel(),
                 sx + 42, sy + (TOP_BAR_H - 8) / 2, COL_TEXT_DIM, false);
 
         // Sidebar background
@@ -127,20 +128,20 @@ public class FujiScreen extends Screen {
         super.render(gfx, mouseX, mouseY, delta);
     }
 
-    private void drawBorder(DrawContext gfx, int x, int y, int w, int h, int color) {
+    private void drawBorder(GuiGraphics gfx, int x, int y, int w, int h, int color) {
         gfx.fill(x, y, x + w, y + 1, color);
         gfx.fill(x, y + h - 1, x + w, y + h, color);
         gfx.fill(x, y, x + 1, y + h, color);
         gfx.fill(x + w - 1, y, x + w, y + h, color);
     }
 
-    private void drawCornerAccent(DrawContext gfx, int x, int y, int dir) {
+    private void drawCornerAccent(GuiGraphics gfx, int x, int y, int dir) {
         gfx.fill(x, y - 4, x + dir * 8, y - 3, COL_ACCENT);
         gfx.fill(x - 1, y - 4, x, y + 4, COL_ACCENT);
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 }

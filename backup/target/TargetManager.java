@@ -1,9 +1,9 @@
 package at.fuji.target;
 
+import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
-import net.minecraft.util.math.Vec3d;
 
 public class TargetManager {
 
@@ -58,7 +58,7 @@ public class TargetManager {
     public static void refresh() {
         for (TargetConfig config : targets) {
             if (config.mobName != null) {
-                Vec3d pos = EntityUtils.findTarget(config.mobName, config.radius);
+                Vec3 pos = EntityUtils.findTarget(config.mobName, config.radius);
                 config.currentPos = pos;
             }
         }

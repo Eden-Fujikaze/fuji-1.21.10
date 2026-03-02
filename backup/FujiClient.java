@@ -1,67 +1,58 @@
 package at.fuji;
 
-import at.fuji.bazaar.BazaarWorker;
 import at.fuji.render.*;
 import at.fuji.target.*;
 import at.fuji.ui.FujiScreen;
+import at.fuji.utils.ScoreboardUtil;
+import at.fuji.bazaar.*;
 
 import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.phys.Vec3;
 
 public class FujiClient implements ClientModInitializer {
 
-	public static final KeyBinding.Category FUJI_CATEGORY = KeyBinding.Category
-			.create(Identifier.of("fuji", "fuji"));
+	public static final KeyMapping.Category FUJI_CATEGORY = KeyMapping.Category
+			.register(ResourceLocation.fromNamespaceAndPath("fuji", "fuji"));
 
-	public static KeyBinding openScreen;
-	public static KeyBinding bazaarBot;
+	public static KeyMapping openScreen;
 
 	@Override
 	public void onInitializeClient() {
 
 		openScreen = KeyBindingHelper.registerKeyBinding(
-				new KeyBinding(
+				new KeyMapping(
 						"key.fuji.open_screen",
-						InputUtil.Type.KEYSYM,
+						InputConstants.Type.KEYSYM,
 						GLFW.GLFW_KEY_G,
 						FUJI_CATEGORY));
 
-		bazaarBot = KeyBindingHelper.registerKeyBinding(
-				new KeyBinding(
-						"key.fuji.bazaar_bot",
-						InputUtil.Type.KEYSYM,
-						GLFW.GLFW_KEY_H,
-						FUJI_CATEGORY));
-
-		BazaarWorker.load();
-
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
-			if (client.world == null)
+			if (client.level == null)
 				return;
-			BazaarWorker.update();
 			TargetManager.refresh();
-			if (openScreen.isPressed()) {
-				MinecraftClient.getInstance().setScreen(new FujiScreen());
+			if (BazaarCheck.checkInv()) {
+				System.out.println("Player is in the Bazaar!");
 			}
-			if (bazaarBot.wasPressed()) {
-				new BazaarWorker().start();
+
+			if (openScreen.consumeClick()) {
+				Minecraft.getInstance().setScreen(new FujiScreen());
 			}
 		});
 
 		WorldRenderEvents.END_MAIN.register(context -> {
 			if (context.consumers() == null)
 				return;
-			Vec3d cam = MinecraftClient.getInstance().gameRenderer.getCamera().getPos();
+			Vec3 cam = Minecraft.getInstance().gameRenderer.getMainCamera().getPosition();
 			for (TargetConfig config : TargetManager.targets) {
-				Vec3d pos = config.currentPos;
+				Vec3 pos = config.currentPos;
 				if (pos == null)
 					continue;
 
@@ -73,6 +64,5 @@ public class FujiClient implements ClientModInitializer {
 				}
 			}
 		});
-		Runtime.getRuntime().addShutdownHook(new Thread(BazaarWorker::save));
 	}
 }
