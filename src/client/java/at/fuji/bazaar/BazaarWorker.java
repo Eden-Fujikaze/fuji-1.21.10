@@ -84,7 +84,7 @@ public class BazaarWorker {
                 break;
             case OPEN_BAZAAR:
                 String actualItemName = itemName.orElse("Enchanted Diamond");
-                String cmd = String.format("/bazaar %s", actualItemName);
+                String cmd = String.format("bazaar %s", actualItemName);
                 if (client.player != null) {
                     MinecraftClient.getInstance().player.networkHandler.sendChatCommand(cmd);
                 }
