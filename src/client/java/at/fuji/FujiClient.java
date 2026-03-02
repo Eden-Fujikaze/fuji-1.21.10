@@ -3,6 +3,7 @@ package at.fuji;
 import at.fuji.render.*;
 import at.fuji.target.*;
 import at.fuji.ui.FujiScreen;
+import at.fuji.utils.ScoreboardUtil;
 
 import org.lwjgl.glfw.GLFW;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -46,7 +47,8 @@ public class FujiClient implements ClientModInitializer {
 			if (context.consumers() == null)
 				return;
 			Vec3 cam = Minecraft.getInstance().gameRenderer.getMainCamera().getPosition();
-
+			System.out.println("Location: " + ScoreboardUtil.getLocation());
+			System.out.println("Purse: " + ScoreboardUtil.getPurse());
 			for (TargetConfig config : TargetManager.targets) {
 				Vec3 pos = config.currentPos;
 				if (pos == null)

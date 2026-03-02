@@ -9,12 +9,6 @@ public class TargetManager {
 
     public static final List<TargetConfig> targets = new ArrayList<>();
 
-    private static String normalize(String s) {
-        if (s == null)
-            return "";
-        return s.toLowerCase().replaceAll("\\s+", "");
-    }
-
     private static Pattern createPattern(String filter) {
         return Pattern.compile("(?i).*" + Pattern.quote(filter) + ".*");
     }
