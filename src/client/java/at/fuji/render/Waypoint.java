@@ -1,85 +1,89 @@
 package at.fuji.render;
 
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.platform.DepthTestFunction;
+import net.minecraft.client.gl.RenderPipelines;
+import net.minecraft.client.render.*;
+import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
 
 import java.util.OptionalDouble;
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.RenderPhase;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.math.Vec3d;
 
 public class Waypoint {
 
-    private static final float R = 1.0f, G = 0.0f, B = 1.0f, A = 1.0f;
+    private static final float R = 1.0f;
+    private static final float G = 0.0f;
+    private static final float B = 1.0f;
+    private static final float A = 1.0f;
 
-    private static final RenderPipeline LINES_NO_DEPTH = RenderPipelines.register(
-            RenderPipeline.builder(RenderPipelines.RENDERTYPE_LINES_SNIPPET)
-                    .withLocation("pipeline/fuji_waypoint_lines")
-                    .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
-                    .withDepthWrite(false)
-                    .build());
-
-    private static final RenderLayer WAYPOINT_RENDER_TYPE = RenderLayer.of(
-            "fuji_waypoint_lines",
+    // Proper Yarn custom RenderLayer
+    private static final RenderLayer WAYPOINT_LAYER = RenderLayer.of(
+            "fuji_waypoint",
             1536,
-            LINES_NO_DEPTH,
+            false,
+            true, // translucent
+            RenderPipelines.DEBUG_LINE_STRIP, // <-- this ignores depth
             RenderLayer.MultiPhaseParameters.builder()
                     .lineWidth(new RenderPhase.LineWidth(OptionalDouble.empty()))
                     .layering(RenderPhase.VIEW_OFFSET_Z_LAYERING)
                     .target(RenderPhase.ITEM_ENTITY_TARGET)
                     .build(false));
 
-    public static void drawWaypoint(MatrixStack poseStack, Vec3d targetPos, Vec3d cameraPos,
-            VertexConsumerProvider bufferSource) {
+    public static void drawWaypoint(MatrixStack matrices,
+            Vec3d targetPos,
+            Vec3d cameraPos,
+            VertexConsumerProvider providers) {
 
-        poseStack.push();
+        matrices.push();
 
-        // Translate to the block position (bottom-northwest corner, like a real block)
-        poseStack.translate(
+        // Move to block position relative to camera
+        matrices.translate(
                 targetPos.x - cameraPos.x,
                 targetPos.y - cameraPos.y,
                 targetPos.z - cameraPos.z);
 
-        Matrix4f matrix = poseStack.peek().getPositionMatrix();
-        VertexConsumer lines = bufferSource.getBuffer(WAYPOINT_RENDER_TYPE);
+        Matrix4f matrix = matrices.peek().getPositionMatrix();
+        VertexConsumer buffer = providers.getBuffer(WAYPOINT_LAYER);
 
-        // 8 corners of a 1x1x1 cube
-        // Bottom face (y=0)
-        addLine(lines, matrix, 0, 0, 0, 1, 0, 0); // bottom south
-        addLine(lines, matrix, 1, 0, 0, 1, 0, 1); // bottom east
-        addLine(lines, matrix, 1, 0, 1, 0, 0, 1); // bottom north
-        addLine(lines, matrix, 0, 0, 1, 0, 0, 0); // bottom west
+        // Bottom square
+        addLine(buffer, matrix, 0, 0, 0, 1, 0, 0);
+        addLine(buffer, matrix, 1, 0, 0, 1, 0, 1);
+        addLine(buffer, matrix, 1, 0, 1, 0, 0, 1);
+        addLine(buffer, matrix, 0, 0, 1, 0, 0, 0);
 
-        // Top face (y=1)
-        addLine(lines, matrix, 0, 1, 0, 1, 1, 0); // top south
-        addLine(lines, matrix, 1, 1, 0, 1, 1, 1); // top east
-        addLine(lines, matrix, 1, 1, 1, 0, 1, 1); // top north
-        addLine(lines, matrix, 0, 1, 1, 0, 1, 0); // top west
+        // Top square
+        addLine(buffer, matrix, 0, 1, 0, 1, 1, 0);
+        addLine(buffer, matrix, 1, 1, 0, 1, 1, 1);
+        addLine(buffer, matrix, 1, 1, 1, 0, 1, 1);
+        addLine(buffer, matrix, 0, 1, 1, 0, 1, 0);
 
         // Vertical edges
-        addLine(lines, matrix, 0, 0, 0, 0, 1, 0); // corner --
-        addLine(lines, matrix, 1, 0, 0, 1, 1, 0); // corner +-
-        addLine(lines, matrix, 1, 0, 1, 1, 1, 1); // corner ++
-        addLine(lines, matrix, 0, 0, 1, 0, 1, 1); // corner -+
+        addLine(buffer, matrix, 0, 0, 0, 0, 1, 0);
+        addLine(buffer, matrix, 1, 0, 0, 1, 1, 0);
+        addLine(buffer, matrix, 1, 0, 1, 1, 1, 1);
+        addLine(buffer, matrix, 0, 0, 1, 0, 1, 1);
 
-        poseStack.pop();
+        matrices.pop();
     }
 
-    private static void addLine(VertexConsumer lines, Matrix4f matrix,
+    private static void addLine(VertexConsumer buffer,
+            Matrix4f matrix,
             float x1, float y1, float z1,
             float x2, float y2, float z2) {
 
-        float dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
+        float dx = x2 - x1;
+        float dy = y2 - y1;
+        float dz = z2 - z1;
+
         float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (len == 0)
             len = 1;
 
-        lines.vertex(matrix, x1, y1, z1).color(R, G, B, A).normal(dx / len, dy / len, dz / len);
-        lines.vertex(matrix, x2, y2, z2).color(R, G, B, A).normal(dx / len, dy / len, dz / len);
+        buffer.vertex(matrix, x1, y1, z1)
+                .color(R, G, B, A)
+                .normal(dx / len, dy / len, dz / len);
+
+        buffer.vertex(matrix, x2, y2, z2)
+                .color(R, G, B, A)
+                .normal(dx / len, dy / len, dz / len);
     }
 }

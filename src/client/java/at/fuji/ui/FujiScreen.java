@@ -19,7 +19,6 @@ public class FujiScreen extends Screen {
     private static final int COL_SIDEBAR = 0xFF0D0D16;
     private static final int COL_BORDER = 0xFF2A2A3F;
     private static final int COL_ACCENT = 0xFFB044FF;
-    // private static final int COL_TEXT = 0xFFE0E0F0;
     private static final int COL_TEXT_DIM = 0xFF606075;
     private static final int COL_SEL_BG = 0xFF1A1A28;
 
@@ -32,9 +31,7 @@ public class FujiScreen extends Screen {
     public FujiScreen() {
         super(Text.literal("Fuji"));
         categories.add(new TrackingPanel());
-        // Future panels:
-        // categories.add(new ScoreboardPanel());
-        // categories.add(new SettingsPanel());
+        categories.add(new BazaarPanel()); // ← new
     }
 
     public void addWidget(net.minecraft.client.gui.widget.ClickableWidget widget) {
@@ -56,7 +53,6 @@ public class FujiScreen extends Screen {
         this.clearChildren();
         sidebarButtons.clear();
 
-        // Sidebar buttons
         for (int i = 0; i < categories.size(); i++) {
             final int idx = i;
             Sidebar cat = categories.get(i);
@@ -72,7 +68,6 @@ public class FujiScreen extends Screen {
             this.addDrawableChild(btn);
         }
 
-        // Init active panel in content area
         int contentX = sx + SIDEBAR_W;
         int contentY = sy + TOP_BAR_H;
         int contentW = SCREEN_WIDTH - SIDEBAR_W;
@@ -82,32 +77,18 @@ public class FujiScreen extends Screen {
 
     @Override
     public void render(DrawContext gfx, int mouseX, int mouseY, float delta) {
-        // Backdrop
         gfx.fill(0, 0, this.width, this.height, 0xBB050508);
-
-        // Shadow
         gfx.fill(sx + 5, sy + 5, sx + SCREEN_WIDTH + 5, sy + SCREEN_HEIGHT + 5, 0x44000000);
-
-        // Main panel
         gfx.fill(sx, sy, sx + SCREEN_WIDTH, sy + SCREEN_HEIGHT, COL_PANEL);
-
-        // Top bar
         gfx.fill(sx, sy, sx + SCREEN_WIDTH, sy + TOP_BAR_H, COL_BG);
         gfx.fill(sx, sy + TOP_BAR_H - 1, sx + SCREEN_WIDTH, sy + TOP_BAR_H, COL_BORDER);
-
-        // Top accent line
         gfx.fill(sx, sy, sx + SCREEN_WIDTH, sy + 2, COL_ACCENT);
-
-        // Title
         gfx.drawText(this.textRenderer, "FUJI", sx + 12, sy + (TOP_BAR_H - 8) / 2, COL_ACCENT, false);
         gfx.drawText(this.textRenderer, "//  " + categories.get(selectedCategory).getLabel(),
                 sx + 42, sy + (TOP_BAR_H - 8) / 2, COL_TEXT_DIM, false);
-
-        // Sidebar background
         gfx.fill(sx, sy + TOP_BAR_H, sx + SIDEBAR_W, sy + SCREEN_HEIGHT, COL_SIDEBAR);
         gfx.fill(sx + SIDEBAR_W - 1, sy + TOP_BAR_H, sx + SIDEBAR_W, sy + SCREEN_HEIGHT, COL_BORDER);
 
-        // Sidebar entries highlight
         for (int i = 0; i < categories.size(); i++) {
             int btnY = sy + TOP_BAR_H + 12 + i * 28;
             if (i == selectedCategory) {
@@ -116,14 +97,10 @@ public class FujiScreen extends Screen {
             }
         }
 
-        // Outer border
         drawBorder(gfx, sx, sy, SCREEN_WIDTH, SCREEN_HEIGHT, COL_BORDER);
         drawCornerAccent(gfx, sx, sy, 1);
         drawCornerAccent(gfx, sx + SCREEN_WIDTH, sy, -1);
-
-        // Active category content
         categories.get(selectedCategory).render(gfx, mouseX, mouseY, delta);
-
         super.render(gfx, mouseX, mouseY, delta);
     }
 

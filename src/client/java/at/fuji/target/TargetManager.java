@@ -20,45 +20,39 @@ public class TargetManager {
             return;
         TargetConfig config = new TargetConfig(mobName, waypoint, tracer, radius);
         targets.add(config);
-        ModConfig.get().syncFromTargetManager(); // ← add
-        ModConfig.save(); // ← add
+        saveConfig();
     }
 
     public static void toggleWaypoint(String mobNameFilter) {
         if (mobNameFilter == null || mobNameFilter.isEmpty())
             return;
-
         Pattern pattern = createPattern(mobNameFilter);
-
         for (TargetConfig config : targets) {
             if (pattern.matcher(config.mobName).matches()) {
                 config.waypointEnabled = !config.waypointEnabled;
             }
         }
+        saveConfig();
     }
 
     public static void toggleTracer(String mobNameFilter) {
         if (mobNameFilter == null || mobNameFilter.isEmpty())
             return;
-
         Pattern pattern = createPattern(mobNameFilter);
-
         for (TargetConfig config : targets) {
             if (pattern.matcher(config.mobName).matches()) {
                 config.tracerEnabled = !config.tracerEnabled;
             }
         }
+        saveConfig();
     }
 
     public static void removeTarget(String mobNameFilter) {
         if (mobNameFilter == null || mobNameFilter.isEmpty())
             return;
-
         Pattern pattern = createPattern(mobNameFilter);
-
         targets.removeIf(config -> pattern.matcher(config.mobName).matches());
-        ModConfig.get().syncFromTargetManager(); // ← add
-        ModConfig.save(); // ← add
+        saveConfig();
     }
 
     public static void refresh() {
@@ -66,7 +60,14 @@ public class TargetManager {
             if (config.mobName != null) {
                 Vec3d pos = EntityUtils.findTarget(config.mobName, config.radius);
                 config.currentPos = pos;
+                System.out.println("[TargetManager] " + config.mobName + " radius=" + config.radius + " pos=" + pos
+                        + " waypoint=" + config.waypointEnabled + " tracer=" + config.tracerEnabled);
             }
         }
+    }
+
+    private static void saveConfig() {
+        ModConfig.get().syncFromTargetManager();
+        ModConfig.save();
     }
 }

@@ -1,5 +1,7 @@
 package at.fuji.bazaar;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -13,22 +15,52 @@ import java.util.concurrent.ConcurrentHashMap;
 public class HypixelBazaarApi {
     private static final String BAZAAR_URL = "https://api.hypixel.net/v2/skyblock/bazaar";
     private static final String ITEM_ENDPOINT = "https://api.hypixel.net/v2/resources/skyblock/items";
-    private static JsonObject cachedItemsJson = null; // Separate cache for items
-    private static long lastItemFetchTime = 0;
 
     private static final ConcurrentHashMap<String, Double> priceCache = new ConcurrentHashMap<>();
-    private static long lastFetchTime = 0;
-    private static final long CACHE_TTL_MS = 30_000; // 30 seconds
+    private static final ConcurrentHashMap<String, String> itemNameMap = new ConcurrentHashMap<>();
 
     private static JsonObject cachedJson = null;
+    private static JsonObject cachedItemsJson = null;
 
-    /**
-     * Returns the full "products" JsonObject from the cached bazaar response.
-     * Used by ItemSelector to score all items in one pass without extra HTTP calls.
-     */
+    private static long lastFetchTime = 0;
+    private static long lastItemFetchTime = 0;
+    private static final long CACHE_TTL_MS = 30_000;
+
+    // ── Item names ────────────────────────────────────────────────────────────
+
+    public static CompletableFuture<Void> loadItemNames() {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                String json = fetchUrlSync(ITEM_ENDPOINT);
+                JsonArray items = JsonParser.parseString(json)
+                        .getAsJsonObject()
+                        .getAsJsonArray("items");
+                for (JsonElement el : items) {
+                    JsonObject item = el.getAsJsonObject();
+                    String id = item.get("id").getAsString();
+                    String name = item.get("name").getAsString();
+                    itemNameMap.put(id, name);
+                }
+                System.out.println("[BazaarApi] Loaded " + itemNameMap.size() + " item names.");
+            } catch (Exception e) {
+                System.err.println("[BazaarApi] Failed to load item names: " + e.getMessage());
+            }
+        });
+    }
+
+    public static String getItemName(String productId) {
+        return itemNameMap.getOrDefault(productId, productId);
+    }
+
+    public static String toProductId(String displayName) {
+        return displayName.trim().toUpperCase().replace(" ", "_");
+    }
+
+    // ── Bazaar prices ─────────────────────────────────────────────────────────
+
     public static JsonObject getAllProductsSync() {
         try {
-            BaazarApiRefresh();
+            refreshBazaarApi();
             if (cachedJson == null)
                 return null;
             return cachedJson.getAsJsonObject("products");
@@ -41,7 +73,7 @@ public class HypixelBazaarApi {
     public static CompletableFuture<Double> getBuyOrderPrice(String itemId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                BaazarApiRefresh();
+                refreshBazaarApi();
                 if (cachedJson == null)
                     return -1.0;
 
@@ -68,7 +100,7 @@ public class HypixelBazaarApi {
 
     public static double getBuyOrderPriceSync(String itemId) {
         try {
-            BaazarApiRefresh();
+            refreshBazaarApi();
             if (cachedJson == null)
                 return -1.0;
 
@@ -87,25 +119,16 @@ public class HypixelBazaarApi {
         }
     }
 
-    public static String getItemName(String itemId) {
-        try {
-            refreshItemApi();
-            if (cachedItemsJson == null)
-                return "Unknown Item";
+    // ── Internal refresh ──────────────────────────────────────────────────────
 
-            com.google.gson.JsonArray itemsArray = cachedItemsJson.getAsJsonArray("items");
+    private static synchronized void refreshBazaarApi() throws Exception {
+        long now = System.currentTimeMillis();
+        if (cachedJson != null && (now - lastFetchTime) < CACHE_TTL_MS)
+            return;
 
-            for (com.google.gson.JsonElement element : itemsArray) {
-                JsonObject item = element.getAsJsonObject();
-                if (item.get("id").getAsString().equals(itemId)) {
-                    return item.get("name").getAsString();
-                }
-            }
-            return itemId; // Fallback to ID if name not found
-        } catch (Exception e) {
-            System.err.println("[BazaarApi] Failed to get name for " + itemId + ": " + e.getMessage());
-            return itemId;
-        }
+        cachedJson = JsonParser.parseString(fetchUrlSync(BAZAAR_URL)).getAsJsonObject();
+        lastFetchTime = now;
+        System.out.println("[BazaarApi] Bazaar cache refreshed.");
     }
 
     private static synchronized void refreshItemApi() throws Exception {
@@ -113,32 +136,12 @@ public class HypixelBazaarApi {
         if (cachedItemsJson != null && (now - lastItemFetchTime) < CACHE_TTL_MS)
             return;
 
-        HttpURLConnection conn = (HttpURLConnection) new URL(ITEM_ENDPOINT).openConnection();
-        conn.setRequestMethod("GET");
-        conn.setConnectTimeout(5000);
-        conn.setReadTimeout(5000);
-        conn.setRequestProperty("User-Agent", "Fuji/1.0");
-
-        if (conn.getResponseCode() != 200)
-            throw new RuntimeException("HTTP " + conn.getResponseCode());
-
-        StringBuilder sb = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null)
-                sb.append(line);
-        }
-
-        cachedItemsJson = JsonParser.parseString(sb.toString()).getAsJsonObject();
+        cachedItemsJson = JsonParser.parseString(fetchUrlSync(ITEM_ENDPOINT)).getAsJsonObject();
         lastItemFetchTime = now;
     }
 
-    private static synchronized void BaazarApiRefresh() throws Exception {
-        long now = System.currentTimeMillis();
-        if (cachedJson != null && (now - lastFetchTime) < CACHE_TTL_MS)
-            return;
-
-        HttpURLConnection conn = (HttpURLConnection) new URL(BAZAAR_URL).openConnection();
+    private static String fetchUrlSync(String urlStr) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
         conn.setRequestMethod("GET");
         conn.setConnectTimeout(5000);
         conn.setReadTimeout(5000);
@@ -153,13 +156,6 @@ public class HypixelBazaarApi {
             while ((line = reader.readLine()) != null)
                 sb.append(line);
         }
-
-        cachedJson = JsonParser.parseString(sb.toString()).getAsJsonObject();
-        lastFetchTime = now;
-        System.out.println("[BazaarApi] Cache refreshed.");
-    }
-
-    public static String toProductId(String displayName) {
-        return displayName.trim().toUpperCase().replace(" ", "_");
+        return sb.toString();
     }
 }

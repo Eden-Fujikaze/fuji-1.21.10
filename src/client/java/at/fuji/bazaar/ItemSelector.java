@@ -2,6 +2,8 @@ package at.fuji.bazaar;
 
 import com.google.gson.JsonObject;
 
+import at.fuji.ModConfig;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -20,8 +22,7 @@ import java.util.concurrent.CompletableFuture;
  */
 public class ItemSelector {
 
-    private static final java.util.Set<String> BLACKLIST = java.util.Set.of(
-            "BAZAAR_COOKIE", "BOOSTER_COOKIE");
+    public static List<String> BLACKLIST = ModConfig.get().bazaarBlacklist;
 
     public static CompletableFuture<ItemScore> selectBestItem(double purse) {
         return CompletableFuture.supplyAsync(() -> {
@@ -38,6 +39,9 @@ public class ItemSelector {
                 for (String productId : allProducts.keySet()) {
                     if (BLACKLIST.contains(productId))
                         continue;
+                    if (productId.startsWith("ESSENCE"))
+                        continue;
+
                     total++;
 
                     try {
