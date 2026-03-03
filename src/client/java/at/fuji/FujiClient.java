@@ -41,8 +41,6 @@ public class FujiClient implements ClientModInitializer {
 						GLFW.GLFW_KEY_H,
 						FUJI_CATEGORY));
 
-		BazaarWorker.load();
-
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			if (client.world == null)
 				return;
@@ -73,6 +71,5 @@ public class FujiClient implements ClientModInitializer {
 				}
 			}
 		});
-		Runtime.getRuntime().addShutdownHook(new Thread(BazaarWorker::save));
 	}
 }
