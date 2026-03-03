@@ -1,87 +1,88 @@
 package at.fuji.bazaar;
 
 /**
- * Holds the scored metrics for a single bazaar item.
- * All values are pre-calculated from a single API snapshot.
+ * Scores a single bazaar item using:
+ * weeklyProfit = (askPrice - bidPrice) * salesPerWeek / 168
+ *
+ * askPrice = quick_status.buyPrice (lowest ask — what you pay to place a buy
+ * order)
+ * bidPrice = quick_status.sellPrice (highest bid — what you get to
+ * instant-sell)
+ * spread = askPrice - bidPrice (profit per item under perfect conditions)
  */
 public class ItemScore {
+    public static final double HOURS_PER_WEEK = 168.0;
+    private static final int MAX_ORDER_SIZE = 71_000;
+
     public final String productId;
     public final String displayName;
 
-    // Raw API values
-    public final double buyPrice;       // what you pay to place a buy order
-    public final double sellPrice;      // what you get when placing a sell order
-    public final double buyMovingWeek;  // total coins of buy orders placed this week
-    public final double sellMovingWeek; // total coins of sell orders placed this week
-    public final int    buyOrders;      // number of open competing buy orders
+    // Raw API values (corrected naming)
+    public final double askPrice; // what you pay (quick_status.buyPrice)
+    public final double bidPrice; // what you get (quick_status.sellPrice)
+    public final double buyMovingWeek;
+    public final double sellMovingWeek;
+    public final int buyOrders;
+    public final int sellOrders;
 
-    // Derived values
-    public final double profitPerItem;     // sellPrice - buyPrice
-    public final double profitMargin;      // profitPerItem / buyPrice  (relative margin)
-    public final int    purchasableAmount; // how many you can afford, capped by sell supply
-    public final double totalProfit;       // profitPerItem * purchasableAmount
-    public final double fillSpeed;         // proxy: sellMovingWeek / buyOrders (higher = fills faster)
+    // Derived
+    public final double spread; // askPrice - bidPrice
+    public final double spreadPercent; // spread / askPrice
+    public final double salesPerWeek; // bottleneck side items/week
+    public final double weeklyProfit; // spread * salesPerWeek / 168 ← main metric
+    public final int purchasableAmount;
+    public final double totalProfit; // spread * purchasableAmount
+    public final boolean manipulated;
 
-    // Final composite score
     public final double score;
 
     public ItemScore(
-            String productId,
-            String displayName,
-            double buyPrice,
-            double sellPrice,
-            double buyMovingWeek,
-            double sellMovingWeek,
-            int    buyOrders,
-            double purse
-    ) {
-        this.productId      = productId;
-        this.displayName    = displayName;
-        this.buyPrice       = buyPrice;
-        this.sellPrice      = sellPrice;
-        this.buyMovingWeek  = buyMovingWeek;
+            String productId, String displayName,
+            double askPrice, double bidPrice,
+            double buyMovingWeek, double sellMovingWeek,
+            int buyOrders, int sellOrders,
+            double purse) {
+        this.productId = productId;
+        this.displayName = displayName;
+        this.askPrice = askPrice;
+        this.bidPrice = bidPrice;
+        this.buyMovingWeek = buyMovingWeek;
         this.sellMovingWeek = sellMovingWeek;
-        this.buyOrders      = buyOrders;
+        this.buyOrders = buyOrders;
+        this.sellOrders = sellOrders;
 
-        // How many can we afford? Cap at realistic hourly sell supply.
-        // We place a buy order at ~sellPrice, so we care about sell-side volume (buyMovingWeek
-        // tracks coins spent on buy orders — sellMovingWeek tracks coins from sell orders).
-        // sellMovingWeek / sellPrice / 7 / 24 = average items sold per hour
-        int affordable = (sellPrice > 0 && purse > 0)
-                ? (int) Math.floor(purse / sellPrice)  // we order at sellPrice + 0.1
+        this.spread = askPrice - bidPrice;
+        this.spreadPercent = (askPrice > 0) ? spread / askPrice : 0;
+
+        // salesPerWeek = bottleneck of both sides, converted to item count
+        this.salesPerWeek = Math.min(buyMovingWeek, sellMovingWeek) / askPrice;
+
+        // Core formula
+        this.weeklyProfit = spread * salesPerWeek / HOURS_PER_WEEK;
+
+        // How many can we afford, capped at Hypixel's 71k order limit
+        int affordable = (askPrice > 0 && purse > 0)
+                ? (int) Math.floor(purse / askPrice)
                 : 0;
-        int hourlySupply = (int) (sellMovingWeek / sellPrice / 7.0 / 24.0);
-        this.purchasableAmount = Math.min(affordable, Math.max(1, hourlySupply));
+        this.purchasableAmount = Math.min(MAX_ORDER_SIZE, affordable);
+        this.totalProfit = spread * purchasableAmount;
 
-        // buyPrice = lowest ask (instant buy cost)
-        // sellPrice = highest bid (instant sell return)
-        // Flip strategy: place buy order just above sellPrice, sell order just below buyPrice
-        // The spread is what you pocket: buyPrice - sellPrice
-        this.profitPerItem  = buyPrice - sellPrice;
-        this.profitMargin   = (buyPrice > 0) ? profitPerItem / buyPrice : 0;
-        this.totalProfit    = profitPerItem * purchasableAmount;
+        // Manipulation detection
+        boolean orderImbalance = buyOrders > 0 && sellOrders > 0
+                && (double) Math.max(buyOrders, sellOrders)
+                        / Math.min(buyOrders, sellOrders) > 20.0;
+        boolean thinVolume = salesPerWeek < 1.0 && spread > 50_000;
+        this.manipulated = orderImbalance || thinVolume;
 
-        // Fill speed: sell-side weekly volume per competing buy order.
-        // More sell volume + fewer open buy orders = your order fills faster.
-        this.fillSpeed = (buyOrders > 0) ? sellMovingWeek / buyOrders : sellMovingWeek;
-
-        // Composite score — weight each factor.
-        // We normalise totalProfit by purse so large-purse players don't
-        // purely chase the most expensive item.
-        double normalisedProfit = (purse > 0) ? totalProfit / purse : 0;
-
-        this.score = (normalisedProfit   * 0.40)  // 40% — are we actually making money?
-                   + (profitMargin       * 0.25)  // 25% — margin protects against price swings
-                   + (fillSpeed / 1e9    * 0.20)  // 20% — will this fill quickly? (scaled down)
-                   + (profitPerItem / 1e4 * 0.15); // 15% — raw coins per item (scaled down)
+        this.score = manipulated ? 0.0 : weeklyProfit;
     }
 
     @Override
     public String toString() {
         return String.format(
-            "[%s] score=%.4f profit/item=%.1f total=%.0f amount=%d fillSpeed=%.0f margin=%.2f%%",
-            displayName, score, profitPerItem, totalProfit, purchasableAmount,
-            fillSpeed, profitMargin * 100
-        );
+                "[%s%s] spread=%.1f (%.1f%%) weekly=%.0f/hr total=%.0f amount=%d",
+                displayName, manipulated ? " ⚠MANIP" : "",
+                spread, spreadPercent * 100,
+                weeklyProfit, totalProfit, purchasableAmount);
     }
 }

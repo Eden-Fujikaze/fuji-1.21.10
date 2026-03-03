@@ -1,6 +1,7 @@
 package at.fuji;
 
 import at.fuji.bazaar.BazaarWorker;
+import at.fuji.bazaar.BazaarChatListener;
 import at.fuji.render.*;
 import at.fuji.target.*;
 import at.fuji.ui.FujiScreen;
@@ -40,6 +41,8 @@ public class FujiClient implements ClientModInitializer {
 						InputUtil.Type.KEYSYM,
 						GLFW.GLFW_KEY_H,
 						FUJI_CATEGORY));
+
+		BazaarChatListener.register();
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			if (client.world == null)
