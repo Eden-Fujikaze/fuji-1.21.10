@@ -12,6 +12,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class HypixelBazaarApi {
     private static final String BAZAAR_URL = "https://api.hypixel.net/v2/skyblock/bazaar";
+    private static final String ITEM_ENDPOINT = "https://api.hypixel.net/v2/resources/skyblock/items";
+    private static JsonObject cachedItemsJson = null; // Separate cache for items
+    private static long lastItemFetchTime = 0;
 
     private static final ConcurrentHashMap<String, Double> priceCache = new ConcurrentHashMap<>();
     private static long lastFetchTime = 0;
@@ -25,7 +28,7 @@ public class HypixelBazaarApi {
      */
     public static JsonObject getAllProductsSync() {
         try {
-            refreshCacheIfNeeded();
+            BaazarApiRefresh();
             if (cachedJson == null)
                 return null;
             return cachedJson.getAsJsonObject("products");
@@ -38,7 +41,7 @@ public class HypixelBazaarApi {
     public static CompletableFuture<Double> getBuyOrderPrice(String itemId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                refreshCacheIfNeeded();
+                BaazarApiRefresh();
                 if (cachedJson == null)
                     return -1.0;
 
@@ -65,7 +68,7 @@ public class HypixelBazaarApi {
 
     public static double getBuyOrderPriceSync(String itemId) {
         try {
-            refreshCacheIfNeeded();
+            BaazarApiRefresh();
             if (cachedJson == null)
                 return -1.0;
 
@@ -84,7 +87,53 @@ public class HypixelBazaarApi {
         }
     }
 
-    private static synchronized void refreshCacheIfNeeded() throws Exception {
+    public static String getItemName(String itemId) {
+        try {
+            refreshItemApi();
+            if (cachedItemsJson == null)
+                return "Unknown Item";
+
+            com.google.gson.JsonArray itemsArray = cachedItemsJson.getAsJsonArray("items");
+
+            for (com.google.gson.JsonElement element : itemsArray) {
+                JsonObject item = element.getAsJsonObject();
+                if (item.get("id").getAsString().equals(itemId)) {
+                    return item.get("name").getAsString();
+                }
+            }
+            return itemId; // Fallback to ID if name not found
+        } catch (Exception e) {
+            System.err.println("[BazaarApi] Failed to get name for " + itemId + ": " + e.getMessage());
+            return itemId;
+        }
+    }
+
+    private static synchronized void refreshItemApi() throws Exception {
+        long now = System.currentTimeMillis();
+        if (cachedItemsJson != null && (now - lastItemFetchTime) < CACHE_TTL_MS)
+            return;
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(ITEM_ENDPOINT).openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(5000);
+        conn.setReadTimeout(5000);
+        conn.setRequestProperty("User-Agent", "Fuji/1.0");
+
+        if (conn.getResponseCode() != 200)
+            throw new RuntimeException("HTTP " + conn.getResponseCode());
+
+        StringBuilder sb = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null)
+                sb.append(line);
+        }
+
+        cachedItemsJson = JsonParser.parseString(sb.toString()).getAsJsonObject();
+        lastItemFetchTime = now;
+    }
+
+    private static synchronized void BaazarApiRefresh() throws Exception {
         long now = System.currentTimeMillis();
         if (cachedJson != null && (now - lastFetchTime) < CACHE_TTL_MS)
             return;
@@ -93,7 +142,7 @@ public class HypixelBazaarApi {
         conn.setRequestMethod("GET");
         conn.setConnectTimeout(5000);
         conn.setReadTimeout(5000);
-        conn.setRequestProperty("User-Agent", "FujiBazaarBot/1.0");
+        conn.setRequestProperty("User-Agent", "Fuji/1.0");
 
         if (conn.getResponseCode() != 200)
             throw new RuntimeException("HTTP " + conn.getResponseCode());

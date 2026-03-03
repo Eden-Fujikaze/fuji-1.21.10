@@ -1,7 +1,5 @@
 package at.fuji.bazaar;
 
-import at.fuji.utils.ScoreboardUtils;
-
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.ScreenHandler;
@@ -15,58 +13,79 @@ public class BazaarWorker {
         IDLE,
 
         // --- Action states: execute once, transition immediately ---
-        OPEN_BAZAAR, // send /bazaar command
-        CLICK_SLOT, // click the pending slot exactly once
-        TYPE_AMOUNT, // type calculated amount into screen
-        CLICK_DONE, // click the Done button (slot 2) exactly once
-        CONFIRM_TRADE, // close screen to confirm
+        OPEN_BAZAAR,
+        CLICK_SLOT,
+        TYPE_AMOUNT,
+        CLICK_DONE,
+        CONFIRM_TRADE,
         DONE,
 
         // --- Waiting states: poll until condition is met, no side effects ---
-        AWAIT_SCREEN_OPEN, // wait for any screen to appear
-        AWAIT_SCREEN_CHANGE, // wait for screen title to change (menu nav)
-        AWAIT_SIGN_CLOSE, // wait for sign input screen to close after Enter
-        AWAIT_ENTER_FLUSH, // one tick after Enter before checking screen
-        AWAIT_ITEM_THEN_ESCAPE, // wait for submenu after item click, then escape
-        AWAIT_ITEM_SELECT, // wait for ItemSelector async result
+        AWAIT_SCREEN_OPEN,
+        AWAIT_SCREEN_CHANGE,
+        AWAIT_SIGN_CLOSE,
+        AWAIT_ENTER_FLUSH,
+        AWAIT_ITEM_THEN_ESCAPE,
+        AWAIT_ITEM_SELECT,
+
         // --- Sell flow (after buy order fills) ---
-        OPEN_YOUR_ORDERS, // /bazaar → Your Orders menu
-        SCAN_YOUR_ORDERS, // find the filled item slot
-        AWAIT_FLIP_MENU, // wait for flip submenu to open
-        CLICK_FLIP, // click the Flip button
-        AWAIT_CUSTOM_MENU, // wait for custom amount screen
-        CLICK_CUSTOM_SELL, // click Custom
-        FETCH_SELL_PRICE, // fetch lowest sell price from API
-        AWAIT_SELL_PRICE, // wait for async price fetch
-        TYPE_SELL_PRICE, // type the sell price into sign
-        AWAIT_SELL_SIGN_CLOSE, // wait for sign to close after Enter
+        OPEN_YOUR_ORDERS,
+        CLICK_MANAGE_ORDERS,
+        AWAIT_MANAGE_ORDERS,
+        SCAN_YOUR_ORDERS,
+        AWAIT_FLIP_MENU,
+        CLICK_FLIP,
+        AWAIT_CUSTOM_MENU,
+        CLICK_CUSTOM_SELL,
+        FETCH_SELL_PRICE,
+        AWAIT_SELL_PRICE,
+        TYPE_SELL_PRICE,
+        AWAIT_SELL_SIGN_CLOSE,
+
         // --- Claim sell flow (after sell offer fills) ---
-        OPEN_CLAIM_ORDERS, // /bazaar → Your Orders to claim coins
-        SCAN_CLAIM_ORDERS, // find the filled sell slot
-        AWAIT_CLAIM_CLOSE, // wait for menu to close after click
-        START_FRESH, // close menu and kick off fresh item selection
-        AWAIT_ITEM_CONFIRM, // wait to find item on confirmation screen before escaping
-        AWAIT_TYPING_FLUSH, // wait one tick after typing before clicking Done
-        AWAIT_PRICE, // wait for async price fetch to complete
-        SCAN_MENU, // scan inventory for target slot
+        OPEN_CLAIM_ORDERS,
+        CLICK_MANAGE_ORDERS_CLAIM,
+        AWAIT_MANAGE_ORDERS_CLAIM,
+        SCAN_CLAIM_ORDERS,
+        AWAIT_CLAIM_CLOSE,
+        START_FRESH,
+
+        AWAIT_ITEM_CONFIRM,
+        AWAIT_TYPING_FLUSH,
+        AWAIT_PRICE,
+        SCAN_MENU,
+
+        // --- API order polling ---
+        POLL_ORDERS,
+        AWAIT_POLL_RESULT,
+    }
+
+    // What the poller found that needs action
+    private enum PendingAction {
+        NONE,
+        FLIP_BUY, // filled buy order → place sell offer
+        CLAIM_SELL, // filled sell order → claim coins
     }
 
     private static StateMachine state = StateMachine.IDLE;
+    private static PendingAction pendingAction = PendingAction.NONE;
+
+    // How often to poll (ms). 30 s keeps us well under the 120 req/min limit.
+    private static long lastOrderCheck = 0;
+    private static final long ORDER_CHECK_INTERVAL = 30_000;
 
     static MinecraftClient client = MinecraftClient.getInstance();
-    // Set by ItemSelector before the bot starts — null means not yet selected
     static String itemName = null;
     static List<String> menuBuyItems = List.of("Custom Amount", "Create Buy Order", "Top Order +0.1");
     static List<String> menuItems = menuBuyItems;
     static ScreenHandler handler;
+    static String displayName = null;
 
     private static int pendingSlot = -1;
     private static double calculatedSellPrice = 0;
     private static String pendingMenu = "";
     private static String screenTitleBefore = null;
     private static int calculatedAmount = 1;
-
-    // ── Persistence ──────────────────────────────────────────────────────────
 
     // ── Control ───────────────────────────────────────────────────────────────
 
@@ -83,16 +102,12 @@ public class BazaarWorker {
             itemName = best.displayName;
             calculatedAmount = best.purchasableAmount;
             System.out.println("[BazaarWorker] Selected: " + best);
-            System.out.println("[BazaarWorker] calculatedAmount=" + calculatedAmount + " sellPrice=" + best.askPrice
-                    + " purse=" + purse);
+            System.out.println("[BazaarWorker] calculatedAmount=" + calculatedAmount
+                    + " sellPrice=" + best.askPrice + " purse=" + purse);
             MinecraftClient.getInstance().execute(() -> state = StateMachine.OPEN_BAZAAR);
         });
     }
 
-    /**
-     * Called when a buy order fills — skip re-selection and go straight to
-     * placing a sell offer for the same item at the current best sell price.
-     */
     public static void onBuyFilled(String filledItemName, int amount) {
         itemName = filledItemName;
         calculatedAmount = amount;
@@ -100,11 +115,6 @@ public class BazaarWorker {
         state = StateMachine.OPEN_YOUR_ORDERS;
     }
 
-    /**
-     * Called when a sell offer fills — open Your Orders, click the item to claim
-     * coins,
-     * close the menu, then restart with fresh item selection.
-     */
     public static void onSellFilled(String filledItemName) {
         itemName = filledItemName;
         System.out.println("[BazaarWorker] Sell filled — claiming coins for " + itemName);
@@ -118,40 +128,84 @@ public class BazaarWorker {
             return;
         handler = client.player.currentScreenHandler;
 
+        // ── API polling — only when idle and no screen is open ───────────────
+        if (state == StateMachine.IDLE && client.currentScreen == null) {
+            long now = System.currentTimeMillis();
+            if (now - lastOrderCheck > ORDER_CHECK_INTERVAL) {
+                lastOrderCheck = now;
+                state = StateMachine.POLL_ORDERS;
+            }
+        }
+
         switch (state) {
 
             // ════════════════════════════════════════════════════════════════
-            // ACTION STATES — each runs exactly once then transitions out
+            // API POLLING
+            // ════════════════════════════════════════════════════════════════
+
+            case POLL_ORDERS: {
+                state = StateMachine.AWAIT_POLL_RESULT;
+                String uuid = client.player.getUuidAsString();
+                HypixelOrderChecker.fetchOrders(uuid).thenAccept(orders -> {
+                    for (HypixelOrderChecker.Order order : orders) {
+                        if (!order.isFilled())
+                            continue;
+
+                        if ("BUY".equals(order.type)) {
+                            System.out.println("[BazaarWorker] Filled BUY order found: "
+                                    + order.productId + " x" + order.amount);
+                            MinecraftClient.getInstance().execute(() -> {
+                                itemName = HypixelBazaarApi.getItemName(order.productId);
+                                calculatedAmount = order.amount;
+                                pendingAction = PendingAction.FLIP_BUY;
+                                state = StateMachine.OPEN_YOUR_ORDERS;
+                            });
+                            return; // handle one order per poll cycle
+                        }
+
+                        if ("SELL".equals(order.type)) {
+                            System.out.println("[BazaarWorker] Filled SELL order found: "
+                                    + order.productId + " x" + order.amount);
+                            MinecraftClient.getInstance().execute(() -> {
+                                itemName = HypixelBazaarApi.getItemName(order.productId);
+                                pendingAction = PendingAction.CLAIM_SELL;
+                                state = StateMachine.OPEN_CLAIM_ORDERS;
+                            });
+                            return;
+                        }
+                    }
+                    // Nothing filled — go back to idle
+                    MinecraftClient.getInstance().execute(() -> state = StateMachine.IDLE);
+                });
+                break;
+            }
+
+            case AWAIT_POLL_RESULT: {
+                // Spinning — async callback drives the next transition
+                break;
+            }
+
+            // ════════════════════════════════════════════════════════════════
+            // ACTION STATES
             // ════════════════════════════════════════════════════════════════
 
             case OPEN_BAZAAR: {
-                client.player.networkHandler.sendChatCommand("bazaar " + itemName);
+                displayName = HypixelBazaarApi.getItemName(itemName);
+                client.player.networkHandler.sendChatCommand("bazaar " + displayName);
                 state = StateMachine.AWAIT_SCREEN_OPEN;
                 break;
             }
 
             case CLICK_SLOT: {
-                // Snapshot the current screen title so AWAIT_SCREEN_CHANGE knows what changed
                 screenTitleBefore = getScreenTitle();
                 doClickSlot(pendingSlot);
                 pendingSlot = -1;
 
                 switch (pendingMenu) {
                     case "__ITEM__":
-                        // Opened item submenu — wait for the new menu to load
-                        state = StateMachine.AWAIT_SCREEN_CHANGE;
-                        break;
                     case "Create Buy Order":
-                        // Clicking Buy Order opens a new menu containing "Custom Amount" — go scan for
-                        // it
-                        state = StateMachine.AWAIT_SCREEN_CHANGE;
-                        break;
                     case "Custom Amount":
-                        // Clicking Custom Amount opens the SignEditScreen — wait for it
-                        state = StateMachine.AWAIT_SCREEN_CHANGE;
-                        break;
                     case "Top Order +0.1":
-                        // Wait for the confirmation screen, scan for the item, then escape
                         state = StateMachine.AWAIT_SCREEN_CHANGE;
                         break;
                     default:
@@ -162,23 +216,18 @@ public class BazaarWorker {
             }
 
             case TYPE_AMOUNT: {
-                // Type the amount into the open screen
                 typeIntoScreen(String.valueOf(calculatedAmount));
-                // Give the game one tick to flush the characters into the screen's
-                // text field before we click Done — otherwise Done fires mid-type
                 state = StateMachine.AWAIT_TYPING_FLUSH;
                 break;
             }
 
             case CLICK_DONE: {
-                // Press Enter to confirm, then idle one tick before checking screen state
                 pressEnter();
                 state = StateMachine.AWAIT_ENTER_FLUSH;
                 break;
             }
 
             case AWAIT_ITEM_CONFIRM: {
-                // Scan for the item on the confirmation screen, then escape
                 if (client.currentScreen == null)
                     break;
                 for (int i = 0; i < handler.slots.size(); i++) {
@@ -189,7 +238,7 @@ public class BazaarWorker {
                     if (stack.getItem() == net.minecraft.item.Items.RED_STAINED_GLASS_PANE)
                         continue;
                     if (stack.getName().getString().contains("Buy Order")) {
-                        System.out.println("[BazaarWorker] Found item on confirmation screen, pressing escape.");
+                        System.out.println("[BazaarWorker] Found item on confirmation screen.");
                         state = StateMachine.CONFIRM_TRADE;
                         return;
                     }
@@ -198,8 +247,6 @@ public class BazaarWorker {
             }
 
             case CONFIRM_TRADE: {
-                // Top Order +0.1 was clicked — scan the current menu for the item icon and
-                // click it
                 if (client.currentScreen == null)
                     break;
                 for (int i = 0; i < handler.slots.size(); i++) {
@@ -217,17 +264,18 @@ public class BazaarWorker {
                         return;
                     }
                 }
-                break; // item not found yet, retry next tick
+                break;
             }
 
             case DONE: {
                 System.out.println("[BazaarWorker] Trade complete.");
+                pendingAction = PendingAction.NONE;
                 state = StateMachine.IDLE;
                 break;
             }
 
             // ════════════════════════════════════════════════════════════════
-            // WAITING STATES — pure polls, zero side effects
+            // WAITING STATES
             // ════════════════════════════════════════════════════════════════
 
             case AWAIT_SCREEN_OPEN: {
@@ -235,10 +283,10 @@ public class BazaarWorker {
                     break;
                 if ("__SELL_FLOW__".equals(pendingMenu)) {
                     pendingMenu = "";
-                    state = StateMachine.SCAN_YOUR_ORDERS;
+                    state = StateMachine.CLICK_MANAGE_ORDERS;
                 } else if ("__CLAIM_FLOW__".equals(pendingMenu)) {
                     pendingMenu = "";
-                    state = StateMachine.SCAN_CLAIM_ORDERS;
+                    state = StateMachine.CLICK_MANAGE_ORDERS_CLAIM;
                 } else {
                     state = StateMachine.SCAN_MENU;
                 }
@@ -247,18 +295,16 @@ public class BazaarWorker {
 
             case AWAIT_SCREEN_CHANGE: {
                 if ("Custom Amount".equals(pendingMenu)) {
-                    // Clicking Custom Amount opens the SignEditScreen — wait for it specifically
-                    if (isInputScreen()) {
+                    if (isInputScreen())
                         state = StateMachine.TYPE_AMOUNT;
-                    }
                 } else if ("Top Order +0.1".equals(pendingMenu)) {
-                    // After clicking Top Order, wait for confirmation screen then scan for item
-                    if (client.currentScreen != null && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
+                    if (client.currentScreen != null
+                            && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
                         state = StateMachine.AWAIT_ITEM_CONFIRM;
                     }
                 } else {
-                    // All other clicks (item icon, Buy Order) just open a new inventory menu
-                    if (client.currentScreen != null && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
+                    if (client.currentScreen != null
+                            && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
                         state = StateMachine.SCAN_MENU;
                     }
                 }
@@ -266,19 +312,17 @@ public class BazaarWorker {
             }
 
             case AWAIT_TYPING_FLUSH: {
-                // One tick has passed since typeIntoScreen — safe to click Done now
                 state = StateMachine.CLICK_DONE;
                 break;
             }
 
             case AWAIT_ITEM_SELECT: {
-                // Spinning — ItemSelector callback will set state to OPEN_BAZAAR when ready
                 break;
             }
 
             case AWAIT_ITEM_THEN_ESCAPE: {
-                // Wait for screen to change after clicking item, then press escape
-                if (client.currentScreen != null && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
+                if (client.currentScreen != null
+                        && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
                     pressEscape();
                     state = StateMachine.DONE;
                 }
@@ -286,13 +330,11 @@ public class BazaarWorker {
             }
 
             case AWAIT_ENTER_FLUSH: {
-                // One tick has passed since Enter — now wait for sign to fully close
                 state = StateMachine.AWAIT_SIGN_CLOSE;
                 break;
             }
 
             case AWAIT_SIGN_CLOSE: {
-                // Wait until the sign screen is gone and a new inventory menu has opened
                 if (!isInputScreen() && client.currentScreen != null) {
                     state = StateMachine.SCAN_MENU;
                 }
@@ -300,7 +342,6 @@ public class BazaarWorker {
             }
 
             case AWAIT_PRICE: {
-                // Async fetch is in flight; the thenAccept callback will set state when ready
                 break;
             }
 
@@ -308,7 +349,7 @@ public class BazaarWorker {
                 if (client.currentScreen == null)
                     break;
 
-                // Pass 1: action buttons take priority — scan all slots before falling back
+                // Pass 1: action buttons
                 for (int i = 0; i < handler.slots.size(); i++) {
                     Slot slot = handler.slots.get(i);
                     ItemStack stack = slot.getStack();
@@ -317,20 +358,16 @@ public class BazaarWorker {
                     if (stack.getItem() == net.minecraft.item.Items.RED_STAINED_GLASS_PANE)
                         continue;
 
-                    String displayName = stack.getName().getString();
-
+                    String name = stack.getName().getString();
                     for (String menuItem : menuItems) {
-                        if (displayName.contains(menuItem)) {
+                        if (name.contains(menuItem)) {
                             System.out.println("[BazaarWorker] Found action: " + menuItem + " at slot " + i);
                             pendingSlot = i;
                             pendingMenu = menuItem;
-
                             if ("Create Buy Order".equals(menuItem)) {
-                                // Fetch price now; after clicking Buy Order we scan for Custom Amount
                                 state = StateMachine.AWAIT_PRICE;
                                 fetchPrice();
                             } else {
-                                // Custom Amount and Top Order +0.1 — click straight away
                                 state = StateMachine.CLICK_SLOT;
                             }
                             return;
@@ -338,7 +375,7 @@ public class BazaarWorker {
                     }
                 }
 
-                // Pass 2: no action buttons found — click the item icon to open its submenu
+                // Pass 2: item icon
                 for (int i = 0; i < handler.slots.size(); i++) {
                     Slot slot = handler.slots.get(i);
                     ItemStack stack = slot.getStack();
@@ -347,10 +384,9 @@ public class BazaarWorker {
                     if (stack.getItem() == net.minecraft.item.Items.RED_STAINED_GLASS_PANE)
                         continue;
 
-                    String displayName = stack.getName().getString();
-
-                    if (displayName.equalsIgnoreCase(itemName)) {
-                        System.out.println("[BazaarWorker] Found item slot: " + displayName + " at slot " + i);
+                    String name = stack.getName().getString();
+                    if (name.equalsIgnoreCase(itemName)) {
+                        System.out.println("[BazaarWorker] Found item slot: " + name + " at slot " + i);
                         pendingSlot = i;
                         pendingMenu = "__ITEM__";
                         state = StateMachine.CLICK_SLOT;
@@ -360,19 +396,47 @@ public class BazaarWorker {
                 break;
             }
 
+            // ════════════════════════════════════════════════════════════════
+            // SELL FLOW (flip filled buy order)
+            // ════════════════════════════════════════════════════════════════
+
             case OPEN_YOUR_ORDERS: {
-                // Open bazaar — this shows "Your Orders" when you have active orders
                 client.player.networkHandler.sendChatCommand("bazaar");
-                state = StateMachine.AWAIT_SCREEN_OPEN;
-                // Override: after screen opens go to SCAN_YOUR_ORDERS not SCAN_MENU
                 pendingMenu = "__SELL_FLOW__";
+                state = StateMachine.AWAIT_SCREEN_OPEN;
+                break;
+            }
+
+            case CLICK_MANAGE_ORDERS: {
+                if (client.currentScreen == null)
+                    break;
+                for (int i = 0; i < handler.slots.size(); i++) {
+                    Slot slot = handler.slots.get(i);
+                    ItemStack stack = slot.getStack();
+                    if (stack.isEmpty())
+                        continue;
+                    if (stack.getName().getString().contains("Manage Orders")) {
+                        System.out.println("[BazaarWorker] Clicking Manage Orders at slot " + i);
+                        screenTitleBefore = getScreenTitle();
+                        doClickSlot(i);
+                        state = StateMachine.AWAIT_MANAGE_ORDERS;
+                        return;
+                    }
+                }
+                break;
+            }
+
+            case AWAIT_MANAGE_ORDERS: {
+                if (client.currentScreen != null
+                        && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
+                    state = StateMachine.SCAN_YOUR_ORDERS;
+                }
                 break;
             }
 
             case SCAN_YOUR_ORDERS: {
                 if (client.currentScreen == null)
                     break;
-                // Find the slot containing the item we just bought
                 for (int i = 0; i < handler.slots.size(); i++) {
                     Slot slot = handler.slots.get(i);
                     ItemStack stack = slot.getStack();
@@ -380,9 +444,13 @@ public class BazaarWorker {
                         continue;
                     if (stack.getItem() == net.minecraft.item.Items.RED_STAINED_GLASS_PANE)
                         continue;
-                    if (stack.getName().getString().contains(itemName)) {
-                        System.out.println(
-                                "[BazaarWorker] Found order slot: " + stack.getName().getString() + " at " + i);
+
+                    String slotName = stack.getName().getString();
+                    System.out.println("[BazaarWorker] Scanning slot " + i + ": '" + slotName + "' vs itemName: '"
+                            + itemName + "'");
+
+                    if (slotName.toLowerCase().contains(itemName.toLowerCase())) {
+                        System.out.println("[BazaarWorker] Found order slot: " + slotName + " at " + i);
                         screenTitleBefore = getScreenTitle();
                         doClickSlot(i);
                         state = StateMachine.AWAIT_FLIP_MENU;
@@ -393,8 +461,8 @@ public class BazaarWorker {
             }
 
             case AWAIT_FLIP_MENU: {
-                // Wait for the flip submenu to open (screen title changes)
-                if (client.currentScreen != null && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
+                if (client.currentScreen != null
+                        && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
                     state = StateMachine.CLICK_FLIP;
                 }
                 break;
@@ -420,7 +488,8 @@ public class BazaarWorker {
             }
 
             case AWAIT_CUSTOM_MENU: {
-                if (client.currentScreen != null && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
+                if (client.currentScreen != null
+                        && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
                     state = StateMachine.CLICK_CUSTOM_SELL;
                 }
                 break;
@@ -448,7 +517,6 @@ public class BazaarWorker {
                 state = StateMachine.AWAIT_SELL_PRICE;
                 String productId = HypixelBazaarApi.toProductId(itemName);
                 HypixelBazaarApi.getBuyOrderPrice(productId).thenAccept(lowestSell -> {
-                    // getBuyOrderPrice returns buyPrice (lowest ask = lowest sell offer)
                     calculatedSellPrice = lowestSell;
                     System.out.println("[BazaarWorker] Sell price: " + calculatedSellPrice);
                     MinecraftClient.getInstance().execute(() -> state = StateMachine.TYPE_SELL_PRICE);
@@ -457,21 +525,18 @@ public class BazaarWorker {
             }
 
             case AWAIT_SELL_PRICE: {
-                // Spinning — async callback drives transition
                 break;
             }
 
             case TYPE_SELL_PRICE: {
                 if (!isInputScreen())
-                    break; // wait for sign to appear
+                    break;
                 typeIntoScreen(String.valueOf((long) calculatedSellPrice));
-                // AWAIT_TYPING_FLUSH gives one tick before Enter
                 state = StateMachine.AWAIT_SELL_SIGN_CLOSE;
                 break;
             }
 
             case AWAIT_SELL_SIGN_CLOSE: {
-                // Wait one tick for typing to flush, then Enter
                 if (!isInputScreen())
                     break;
                 pressEnter();
@@ -479,10 +544,41 @@ public class BazaarWorker {
                 break;
             }
 
+            // ════════════════════════════════════════════════════════════════
+            // CLAIM FLOW (claim filled sell order)
+            // ════════════════════════════════════════════════════════════════
+
             case OPEN_CLAIM_ORDERS: {
                 client.player.networkHandler.sendChatCommand("bazaar");
                 pendingMenu = "__CLAIM_FLOW__";
                 state = StateMachine.AWAIT_SCREEN_OPEN;
+                break;
+            }
+
+            case CLICK_MANAGE_ORDERS_CLAIM: {
+                if (client.currentScreen == null)
+                    break;
+                for (int i = 0; i < handler.slots.size(); i++) {
+                    Slot slot = handler.slots.get(i);
+                    ItemStack stack = slot.getStack();
+                    if (stack.isEmpty())
+                        continue;
+                    if (stack.getName().getString().contains("Manage Orders")) {
+                        System.out.println("[BazaarWorker] (Claim) Clicking Manage Orders at slot " + i);
+                        screenTitleBefore = getScreenTitle();
+                        doClickSlot(i);
+                        state = StateMachine.AWAIT_MANAGE_ORDERS_CLAIM;
+                        return;
+                    }
+                }
+                break;
+            }
+
+            case AWAIT_MANAGE_ORDERS_CLAIM: {
+                if (client.currentScreen != null
+                        && !Objects.equals(getScreenTitle(), screenTitleBefore)) {
+                    state = StateMachine.SCAN_CLAIM_ORDERS;
+                }
                 break;
             }
 
@@ -496,7 +592,11 @@ public class BazaarWorker {
                         continue;
                     if (stack.getItem() == net.minecraft.item.Items.RED_STAINED_GLASS_PANE)
                         continue;
-                    if (stack.getName().getString().contains(itemName)) {
+
+                    String slotName = stack.getName().getString();
+                    System.out.println("[BazaarWorker] (Claim) Scanning slot " + i + ": " + slotName);
+
+                    if (slotName.toLowerCase().contains(itemName.toLowerCase())) {
                         System.out.println("[BazaarWorker] Claiming sell order at slot " + i);
                         doClickSlot(i);
                         state = StateMachine.AWAIT_CLAIM_CLOSE;
@@ -507,7 +607,6 @@ public class BazaarWorker {
             }
 
             case AWAIT_CLAIM_CLOSE: {
-                // Wait for the screen to close after clicking the order
                 if (client.currentScreen == null) {
                     state = StateMachine.START_FRESH;
                 }
@@ -515,7 +614,6 @@ public class BazaarWorker {
             }
 
             case START_FRESH: {
-                // Coins are now in purse — restart with fresh item selection
                 new BazaarWorker().start();
                 break;
             }
@@ -526,18 +624,15 @@ public class BazaarWorker {
         }
     }
 
-    // ── Price fetch (async) ───────────────────────────────────────────────────
+    // ── Price fetch ───────────────────────────────────────────────────────────
 
     private static void fetchPrice() {
-        // calculatedAmount is already correctly set by ItemSelector.
-        // Just transition to CLICK_SLOT — no need to re-fetch price.
         System.out.println("[BazaarWorker] Amount to order: " + calculatedAmount);
         MinecraftClient.getInstance().execute(() -> state = StateMachine.CLICK_SLOT);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /** Returns true if the current screen is an anvil or sign input screen. */
     private static boolean isInputScreen() {
         if (client.currentScreen == null)
             return false;
@@ -552,15 +647,12 @@ public class BazaarWorker {
     }
 
     private static void doClickSlot(int slotIndex) {
-        if (slotIndex == -1 || handler == null || client.interactionManager == null || client.player == null)
+        if (slotIndex == -1 || handler == null
+                || client.interactionManager == null || client.player == null)
             return;
         System.out.println("[BazaarWorker] Clicking slot " + slotIndex);
         client.interactionManager.clickSlot(
-                handler.syncId,
-                slotIndex,
-                0,
-                SlotActionType.PICKUP,
-                client.player);
+                handler.syncId, slotIndex, 0, SlotActionType.PICKUP, client.player);
     }
 
     private static void typeIntoScreen(String text) {

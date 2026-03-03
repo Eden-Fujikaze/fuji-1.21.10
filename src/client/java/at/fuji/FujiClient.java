@@ -27,7 +27,8 @@ public class FujiClient implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
-
+		ModConfig.load(); // ← add at very top
+		ModConfig.get().loadIntoTargetManager(); // ← restore saved targets
 		openScreen = KeyBindingHelper.registerKeyBinding(
 				new KeyBinding(
 						"key.fuji.open_screen",

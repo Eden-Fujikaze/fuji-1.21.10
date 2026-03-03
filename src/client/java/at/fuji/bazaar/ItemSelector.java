@@ -21,7 +21,7 @@ import java.util.concurrent.CompletableFuture;
 public class ItemSelector {
 
     private static final java.util.Set<String> BLACKLIST = java.util.Set.of(
-            "BAZAAR_COOKIE", "BOOSTER_COOKIE", "ESSENCE_DIAMOND");
+            "BAZAAR_COOKIE", "BOOSTER_COOKIE");
 
     public static CompletableFuture<ItemScore> selectBestItem(double purse) {
         return CompletableFuture.supplyAsync(() -> {
@@ -61,7 +61,7 @@ public class ItemSelector {
                             noSpread++;
                             continue;
                         }
-                        if (askPrice - bidPrice < 500) {
+                        if (askPrice - bidPrice < 200) {
                             noSpread++;
                             continue;
                         } // less than 100 coins profit per item

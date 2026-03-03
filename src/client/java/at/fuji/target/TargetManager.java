@@ -3,6 +3,8 @@ package at.fuji.target;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+
+import at.fuji.ModConfig;
 import net.minecraft.util.math.Vec3d;
 
 public class TargetManager {
@@ -18,6 +20,8 @@ public class TargetManager {
             return;
         TargetConfig config = new TargetConfig(mobName, waypoint, tracer, radius);
         targets.add(config);
+        ModConfig.get().syncFromTargetManager(); // ← add
+        ModConfig.save(); // ← add
     }
 
     public static void toggleWaypoint(String mobNameFilter) {
@@ -53,6 +57,8 @@ public class TargetManager {
         Pattern pattern = createPattern(mobNameFilter);
 
         targets.removeIf(config -> pattern.matcher(config.mobName).matches());
+        ModConfig.get().syncFromTargetManager(); // ← add
+        ModConfig.save(); // ← add
     }
 
     public static void refresh() {
