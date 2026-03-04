@@ -1,19 +1,15 @@
 package at.fuji.bazaar;
 
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.entity.player.PlayerInventory;
-import net.minecraft.item.ItemStack;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
-import at.fuji.ModConfig;
+import net.minecraft.item.ItemStack;
+import at.fuji.utils.MenuUtils;
 import at.fuji.utils.InputUtils;
 import at.fuji.utils.LoreUtils;
-import at.fuji.utils.MenuUtils;
-
 import java.util.List;
 
 public class BazaarWorker {
-
     public enum StateMachine {
         IDLE,
         OPEN_BAZAAR, CLICK_SLOT, TYPE_AMOUNT, CLICK_DONE, CONFIRM_TRADE, DONE,
@@ -24,24 +20,6 @@ public class BazaarWorker {
         AWAIT_SELL_PRICE, TYPE_SELL_PRICE, AWAIT_SELL_SIGN_CLOSE,
         OPEN_CLAIM_ORDERS, SCAN_CLAIM_ORDERS, AWAIT_CLAIM_CLOSE, START_FRESH,
         AWAIT_ITEM_CONFIRM, AWAIT_TYPING_FLUSH, AWAIT_PRICE, SCAN_MENU,
-
-        // ── NPC sell flow ─────────────────────────────────────────────────────
-        /** Waiting for async NPC-vs-buy price comparison to resolve. */
-        NPC_PRICE_CHECK,
-        /** Click "Cancel" instead of "Flip" in the filled-order sub-menu. */
-        CLICK_CANCEL,
-        /** Wait for the order sub-menu (and orders list) to close. */
-        AWAIT_CANCEL_CLOSE,
-        /** Send /trades to open the NPC trade screen. */
-        OPEN_TRADES,
-        /** Wait for the /trades GUI to appear. */
-        AWAIT_TRADES_OPEN,
-        /** Find the item in the trades GUI and click it to sell. */
-        NPC_SELL_ITEM,
-        /** Send /pickupstash because the inventory has no items yet. */
-        PICKUP_STASH,
-        /** Wait STASH_WAIT_MS then decide: sell or reset (empty stash). */
-        AWAIT_STASH_DONE,
     }
 
     private static StateMachine state = StateMachine.IDLE;
@@ -61,28 +39,6 @@ public class BazaarWorker {
     private static String pendingMenu = "";
     private static String screenTitleBefore = null;
     private static int calculatedAmount = 1;
-
-    // ── NPC sell state ────────────────────────────────────────────────────────
-
-    /**
-     * NPC sell price fetched from the API for the current item.
-     * Set by {@link #fetchNpcPriceAndCheck()}.
-     * <p>
-     * NOTE: {@code HypixelBazaarApi.getNpcSellPrice(productId)} must be added
-     * to that class — it should follow the same pattern as
-     * {@code getBuyOrderPrice}, pulling {@code npcSellPrice} from the
-     * Hypixel Bazaar API response for the product.
-     */
-    private static double npcSellPrice = 0;
-
-    /** Inventory item count recorded just before sending /pickupstash. */
-    private static int inventoryCountBefore = 0;
-
-    /** Timestamp (ms) when /pickupstash was sent, used for the wait delay. */
-    private static long stashSentAt = 0;
-
-    /** How long to wait after /pickupstash before checking inventory. */
-    private static final long STASH_WAIT_MS = 2_500;
 
     // ── Control ───────────────────────────────────────────────────────────────
 
@@ -122,8 +78,8 @@ public class BazaarWorker {
         if (client == null || client.player == null)
             return;
 
-        // Timer-based order polling when idle
-        if (state == StateMachine.IDLE && client.currentScreen == null) {
+        // Timer-based order polling when idle — only after itemName is known
+        if (state == StateMachine.IDLE && client.currentScreen == null && itemName != null) {
             long now = System.currentTimeMillis();
             if (now - lastOrderCheck > ORDER_CHECK_INTERVAL) {
                 lastOrderCheck = now;
@@ -312,6 +268,12 @@ public class BazaarWorker {
             case SCAN_YOUR_ORDERS: {
                 if (!MenuUtils.isScreenOpen())
                     break;
+                // itemName may be null if the timer fires before selectBestItem completes
+                if (itemName == null) {
+                    InputUtils.pressEscape();
+                    state = StateMachine.IDLE;
+                    break;
+                }
                 ScreenHandler handler = client.player.currentScreenHandler;
 
                 // Pass 1: look for filled BUY order
@@ -369,16 +331,8 @@ public class BazaarWorker {
             }
 
             case AWAIT_FLIP_MENU: {
-                if (MenuUtils.isScreenOpen() && MenuUtils.screenTitleChanged(screenTitleBefore)) {
-                    if (ModConfig.get().npcSellMode) {
-                        // Kick off async price check; callback will set the next state
-                        npcSellPrice = 0;
-                        fetchNpcPriceAndCheck();
-                        state = StateMachine.NPC_PRICE_CHECK;
-                    } else {
-                        state = StateMachine.CLICK_FLIP;
-                    }
-                }
+                if (MenuUtils.isScreenOpen() && MenuUtils.screenTitleChanged(screenTitleBefore))
+                    state = StateMachine.CLICK_FLIP;
                 break;
             }
 
@@ -501,106 +455,6 @@ public class BazaarWorker {
                 break;
             }
 
-            // ════════════════════════════════════════════════════════════════
-            // NPC SELL FLOW
-            // ════════════════════════════════════════════════════════════════
-
-            case NPC_PRICE_CHECK:
-                // Idle wait — the async callback in fetchNpcPriceAndCheck()
-                // will transition to CLICK_CANCEL or CLICK_FLIP.
-                break;
-
-            case CLICK_CANCEL: {
-                if (!MenuUtils.isScreenOpen())
-                    break;
-                int slot = MenuUtils.scanForSlot("Cancel", false);
-                System.out.println("[BazaarWorker] CLICK_CANCEL scanForSlot='Cancel' returned " + slot);
-                if (slot != -1) {
-                    System.out.println("[BazaarWorker] Clicking Cancel at slot " + slot);
-                    MenuUtils.clickSlot(slot, false);
-                    state = StateMachine.AWAIT_CANCEL_CLOSE;
-                }
-                break;
-            }
-
-            case AWAIT_CANCEL_CLOSE: {
-                // Keep pressing Escape until every layer of the bazaar GUI closes.
-                if (MenuUtils.isScreenOpen()) {
-                    InputUtils.pressEscape();
-                    break;
-                }
-                // GUI is gone — decide whether to sell from inventory or stash
-                int inventoryCount = countInventoryItems();
-                if (inventoryCount > 0) {
-                    System.out.println("[BazaarWorker] " + inventoryCount
-                            + " items found in inventory, opening /trades.");
-                    state = StateMachine.OPEN_TRADES;
-                } else {
-                    System.out.println("[BazaarWorker] Inventory empty, running /pickupstash.");
-                    inventoryCountBefore = 0;
-                    state = StateMachine.PICKUP_STASH;
-                }
-                break;
-            }
-
-            case OPEN_TRADES: {
-                InputUtils.sendCommand("trades");
-                state = StateMachine.AWAIT_TRADES_OPEN;
-                break;
-            }
-
-            case AWAIT_TRADES_OPEN: {
-                if (!MenuUtils.isScreenOpen())
-                    break;
-                state = StateMachine.NPC_SELL_ITEM;
-                break;
-            }
-
-            case NPC_SELL_ITEM: {
-                if (!MenuUtils.isScreenOpen())
-                    break;
-                // Look for a slot whose name contains the item we bought
-                int slot = MenuUtils.scanForSlot(itemName, true);
-                System.out.println("[BazaarWorker] NPC_SELL_ITEM scanForSlot='" + itemName
-                        + "' returned " + slot);
-                if (slot != -1) {
-                    System.out.println("[BazaarWorker] Selling to NPC at slot " + slot);
-                    MenuUtils.clickSlot(slot, false);
-                    state = StateMachine.DONE;
-                } else {
-                    System.out.println("[BazaarWorker] Item not found in /trades menu, escaping.");
-                    InputUtils.pressEscape();
-                    state = StateMachine.DONE;
-                }
-                break;
-            }
-
-            case PICKUP_STASH: {
-                inventoryCountBefore = countInventoryItems();
-                System.out.println("[BazaarWorker] Sending /pickupstash (inventory before: "
-                        + inventoryCountBefore + ").");
-                InputUtils.sendCommand("pickupstash");
-                stashSentAt = System.currentTimeMillis();
-                state = StateMachine.AWAIT_STASH_DONE;
-                break;
-            }
-
-            case AWAIT_STASH_DONE: {
-                // Give the server time to deliver the items before checking
-                if (System.currentTimeMillis() - stashSentAt < STASH_WAIT_MS)
-                    break;
-                int nowCount = countInventoryItems();
-                if (nowCount > inventoryCountBefore) {
-                    System.out.println("[BazaarWorker] Picked up " + (nowCount - inventoryCountBefore)
-                            + " items from stash, opening /trades.");
-                    state = StateMachine.OPEN_TRADES;
-                } else {
-                    System.out.println("[BazaarWorker] Stash empty (or items already in play). Resetting.");
-                    state = StateMachine.START_FRESH;
-                }
-                break;
-            }
-
             case IDLE:
             default:
                 break;
@@ -621,68 +475,5 @@ public class BazaarWorker {
             System.out.println("[BazaarWorker] Sell price fetched: " + price);
             MinecraftClient.getInstance().execute(() -> calculatedSellPrice = price);
         });
-    }
-
-    /**
-     * Asynchronously fetches both the NPC sell price and the current buy-order
-     * price for {@link #itemName}, then decides whether to cancel (NPC sell) or
-     * flip (regular sell order).
-     *
-     * <p>
-     * <b>Required addition to {@code HypixelBazaarApi}:</b>
-     * 
-     * <pre>{@code
-     * public static CompletableFuture<Double> getNpcSellPrice(String productId) {
-     *     // Query https://api.hypixel.net/skyblock/bazaar and return
-     *     // products[productId].npcSellPrice as a Double.
-     * }
-     * }</pre>
-     */
-    private static void fetchNpcPriceAndCheck() {
-        String productId = HypixelBazaarApi.toProductId(itemName);
-        System.out.println("[BazaarWorker] Fetching NPC sell price vs buy price for: " + productId);
-
-        HypixelBazaarApi.getNpcSellPrice(productId)
-                .thenCombine(HypixelBazaarApi.getBuyOrderPrice(productId), (npcPrice, buyPrice) -> {
-                    System.out.println("[BazaarWorker] NPC sell=" + npcPrice + " | buy=" + buyPrice
-                            + " | profitable=" + (npcPrice > buyPrice));
-                    MinecraftClient.getInstance().execute(() -> {
-                        npcSellPrice = npcPrice;
-                        if (npcPrice > buyPrice) {
-                            System.out.println("[BazaarWorker] NPC sell profitable — cancelling order.");
-                            state = StateMachine.CLICK_CANCEL;
-                        } else {
-                            System.out.println("[BazaarWorker] NPC sell not profitable — falling back to flip.");
-                            state = StateMachine.CLICK_FLIP;
-                        }
-                    });
-                    return null;
-                })
-                .exceptionally(err -> {
-                    System.err.println("[BazaarWorker] Price fetch failed: " + err.getMessage()
-                            + " — falling back to flip.");
-                    MinecraftClient.getInstance().execute(() -> state = StateMachine.CLICK_FLIP);
-                    return null;
-                });
-    }
-
-    /**
-     * Counts how many items matching {@link #itemName} are currently in the
-     * player's main inventory.
-     */
-    private static int countInventoryItems() {
-        if (client.player == null || itemName == null)
-            return 0;
-        PlayerInventory inv = client.player.getInventory();
-        int total = 0;
-        for (int i = 0; i < inv.getMainStacks().size(); i++) {
-            ItemStack stack = inv.getMainStacks().get(i);
-            if (stack.isEmpty())
-                continue;
-            String name = LoreUtils.getSlotName(stack);
-            if (name.toLowerCase().contains(itemName.toLowerCase()))
-                total += stack.getCount();
-        }
-        return total;
     }
 }

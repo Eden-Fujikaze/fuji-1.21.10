@@ -39,7 +39,7 @@ import java.util.Map;
  * instant-buy</li>
  * <li>{@code quick_status.sellPrice} = highest bid — what you GET to
  * instant-sell</li>
- * <li>{@code quick_status.npcSellPrice} = fixed NPC sell value (0 if not
+ * <li>{@code npc_sell_price} (items endpoint) = fixed NPC sell value (0 if not
  * NPC-sellable)</li>
  * </ul>
  */
@@ -83,9 +83,8 @@ public class ItemSelector {
                         double sellMovingWeek = qs.get("sellMovingWeek").getAsDouble();
                         int buyOrders = qs.get("buyOrders").getAsInt();
                         int sellOrders = qs.get("sellOrders").getAsInt();
-                        double npcSellPrice = qs.has("npcSellPrice")
-                                ? qs.get("npcSellPrice").getAsDouble()
-                                : 0.0;
+                        // NPC sell price lives in the items endpoint, not bazaar quick_status
+                        double npcSellPrice = HypixelBazaarApi.getNpcSellPriceSync(productId);
 
                         if (askPrice <= 0 || bidPrice <= 0) {
                             badPrice++;

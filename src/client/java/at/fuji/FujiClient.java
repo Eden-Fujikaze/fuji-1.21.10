@@ -70,13 +70,12 @@ public class FujiClient implements ClientModInitializer {
 		HudElementRegistry.addLast(
 				Identifier.of("fuji", "bazaar_status"),
 				(drawContext, tickCounter) -> {
-					System.out.println("[Fuji] HUD tick"); // remove after confirming
 
 					MinecraftClient mc = MinecraftClient.getInstance();
 					if (mc.world == null)
 						return;
 					String text = BazaarWorker.isEnabled() ? "Bazaar Bot: ON" : "Bazaar Bot: OFF";
-					int color = BazaarWorker.isEnabled() ? 0x00FF00 : 0xFF0000;
+					int color = BazaarWorker.isEnabled() ? 0xFF00FF00 : 0xFFFF0000;
 					drawContext.drawTextWithShadow(mc.textRenderer, text, 5, 80, color);
 				});
 

@@ -19,6 +19,13 @@ public class HypixelBazaarApi {
     private static final ConcurrentHashMap<String, Double> priceCache = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, String> itemNameMap = new ConcurrentHashMap<>();
 
+    /**
+     * NPC sell prices loaded from the items endpoint field {@code npc_sell_price}.
+     * Keyed by product ID (e.g. "ENCHANTED_SUGAR").
+     * 0.0 means the item has no NPC sell value.
+     */
+    private static final ConcurrentHashMap<String, Double> npcPriceMap = new ConcurrentHashMap<>();
+
     private static JsonObject cachedJson = null;
     private static JsonObject cachedItemsJson = null;
 
@@ -26,8 +33,12 @@ public class HypixelBazaarApi {
     private static long lastItemFetchTime = 0;
     private static final long CACHE_TTL_MS = 30_000;
 
-    // ── Item names ────────────────────────────────────────────────────────────
+    // ── Item names + NPC prices ───────────────────────────────────────────────
 
+    /**
+     * Loads item display names AND npc_sell_price values from the items endpoint.
+     * Call once at startup from ClientModInitializer.
+     */
     public static CompletableFuture<Void> loadItemNames() {
         return CompletableFuture.runAsync(() -> {
             try {
@@ -35,13 +46,25 @@ public class HypixelBazaarApi {
                 JsonArray items = JsonParser.parseString(json)
                         .getAsJsonObject()
                         .getAsJsonArray("items");
+
+                int npcCount = 0;
                 for (JsonElement el : items) {
                     JsonObject item = el.getAsJsonObject();
                     String id = item.get("id").getAsString();
                     String name = item.get("name").getAsString();
                     itemNameMap.put(id, name);
+
+                    // npc_sell_price is present only for NPC-sellable items
+                    if (item.has("npc_sell_price")) {
+                        double npcPrice = item.get("npc_sell_price").getAsDouble();
+                        if (npcPrice > 0) {
+                            npcPriceMap.put(id, npcPrice);
+                            npcCount++;
+                        }
+                    }
                 }
-                System.out.println("[BazaarApi] Loaded " + itemNameMap.size() + " item names.");
+                System.out.println("[BazaarApi] Loaded " + itemNameMap.size()
+                        + " item names, " + npcCount + " NPC sell prices.");
             } catch (Exception e) {
                 System.err.println("[BazaarApi] Failed to load item names: " + e.getMessage());
             }
@@ -54,6 +77,30 @@ public class HypixelBazaarApi {
 
     public static String toProductId(String displayName) {
         return displayName.trim().toUpperCase().replace(" ", "_");
+    }
+
+    /**
+     * Returns the NPC sell price for {@code itemId} loaded from the items endpoint,
+     * or {@code 0.0} if the item has no NPC sell value.
+     *
+     * <p>
+     * This is the source of truth for NPC sell prices — the bazaar
+     * {@code quick_status} object does NOT contain this field.
+     */
+    public static double getNpcSellPriceSync(String itemId) {
+        return npcPriceMap.getOrDefault(itemId, 0.0);
+    }
+
+    /**
+     * Async wrapper around {@link #getNpcSellPriceSync} for use in
+     * {@code BazaarWorker.fetchNpcPriceAndCheck()}.
+     */
+    public static CompletableFuture<Double> getNpcSellPrice(String itemId) {
+        return CompletableFuture.supplyAsync(() -> {
+            double price = getNpcSellPriceSync(itemId);
+            System.out.println("[BazaarApi] npcSellPrice(" + itemId + ") = " + price);
+            return price;
+        });
     }
 
     // ── Bazaar prices ─────────────────────────────────────────────────────────
@@ -117,46 +164,6 @@ public class HypixelBazaarApi {
             System.err.println("[BazaarApi] Sync fetch failed for " + itemId + ": " + e.getMessage());
             return -1.0;
         }
-    }
-
-    /**
-     * Returns the fixed NPC sell price for {@code itemId} from
-     * {@code quick_status.npcSellPrice}.
-     *
-     * <p>
-     * Returns {@code 0.0} when the field is absent (item has no NPC value).
-     * Used by {@code BazaarWorker.fetchNpcPriceAndCheck()} to compare against the
-     * current buy-order price and decide whether to cancel+NPC-sell or flip.
-     */
-    public static CompletableFuture<Double> getNpcSellPrice(String itemId) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                refreshBazaarApi();
-                if (cachedJson == null)
-                    return 0.0;
-
-                JsonObject products = cachedJson.getAsJsonObject("products");
-                if (products == null || !products.has(itemId)) {
-                    System.err.println("[BazaarApi] Item not found for NPC price: " + itemId);
-                    return 0.0;
-                }
-
-                JsonObject quickStatus = products
-                        .getAsJsonObject(itemId)
-                        .getAsJsonObject("quick_status");
-
-                if (quickStatus == null || !quickStatus.has("npcSellPrice"))
-                    return 0.0;
-
-                double npcPrice = quickStatus.get("npcSellPrice").getAsDouble();
-                System.out.println("[BazaarApi] npcSellPrice(" + itemId + ") = " + npcPrice);
-                return npcPrice;
-
-            } catch (Exception e) {
-                System.err.println("[BazaarApi] Failed to fetch NPC price for " + itemId + ": " + e.getMessage());
-                return 0.0;
-            }
-        });
     }
 
     // ── Internal refresh ──────────────────────────────────────────────────────
