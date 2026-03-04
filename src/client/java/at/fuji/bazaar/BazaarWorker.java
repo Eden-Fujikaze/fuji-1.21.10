@@ -5,6 +5,7 @@ import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.item.ItemStack;
 import at.fuji.utils.MenuUtils;
+import at.fuji.ModConfig;
 import at.fuji.utils.InputUtils;
 import at.fuji.utils.LoreUtils;
 import java.util.List;
@@ -24,6 +25,7 @@ public class BazaarWorker {
 
     private static StateMachine state = StateMachine.IDLE;
     private static boolean enabled = false;
+    public static volatile double lastKnownPurse = 0;
 
     private static long lastOrderCheck = 0;
     private static final long ORDER_CHECK_INTERVAL = 15_000;
@@ -47,6 +49,7 @@ public class BazaarWorker {
         System.out.println("[BazaarWorker] Started.");
         state = StateMachine.AWAIT_ITEM_SELECT;
         double purse = at.fuji.utils.ScoreboardUtils.getPurseValue();
+        lastKnownPurse = purse;
         ItemSelector.selectBestItem(purse).thenAccept(best -> {
             if (best == null) {
                 System.err.println("[BazaarWorker] No item selected, aborting.");
@@ -54,7 +57,8 @@ public class BazaarWorker {
                 return;
             }
             itemName = best.displayName;
-            calculatedAmount = best.purchasableAmount;
+            int amount = ModConfig.get().debugMode ? 1 : best.purchasableAmount;
+            calculatedAmount = amount;
             System.out.println("[BazaarWorker] Selected: " + best.displayName + " x" + calculatedAmount);
             MinecraftClient.getInstance().execute(() -> state = StateMachine.OPEN_BAZAAR);
         });

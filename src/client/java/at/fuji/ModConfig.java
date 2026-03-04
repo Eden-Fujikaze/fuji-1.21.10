@@ -9,7 +9,6 @@ import java.nio.file.*;
 import java.util.*;
 
 public class ModConfig {
-
     private static final Path CONFIG_PATH = FabricLoader.getInstance()
             .getConfigDir().resolve("fuji.json");
 
@@ -26,6 +25,37 @@ public class ModConfig {
      * via /trades — but only when npcSellPrice > buyOrderPrice.
      */
     public boolean npcSellMode = false;
+
+    /**
+     * Debug mode — limits each purchase to exactly 1 item so you can verify
+     * the full buy→flip cycle works without committing real coin volume.
+     * BazaarWorker should check this and cap purchasableAmount at 1.
+     */
+    public boolean debugMode = false;
+
+    /**
+     * Minimum sells-per-hour required for an item to be considered.
+     * Filters out slow-moving items whose orders may sit for hours.
+     * Calculated as: min(buyMovingWeek, sellMovingWeek) / askPrice / HOURS_PER_WEEK
+     * Default: 50 items/hr (~1,200/day).
+     */
+    public int minSellsPerHour = 50;
+
+    /**
+     * Minimum raw coin volume on the slower side (min of buy/sell moving week)
+     * required for an item to be considered. Guards against illiquid items where
+     * a single large order can distort the weekly average.
+     * Default: 500,000 coins/week.
+     */
+    public int minWeeklyVolume = 500_000;
+
+    /**
+     * Minimum total profit expected from one full order batch
+     * (profitPerItem * purchasableAmount). Filters out items where the spread
+     * looks fine individually but the batch is too small to be worthwhile.
+     * Default: 10,000 coins.
+     */
+    public int minProfitPerHour = 10_000;
 
     public static class SavedTarget {
         public String mobName;
@@ -56,9 +86,21 @@ public class ModConfig {
                 instance.targets = new ArrayList<>();
             if (instance.bazaarBlacklist == null)
                 instance.bazaarBlacklist = new ArrayList<>();
+            // Migrate: ensure new numeric fields have sensible defaults if absent from old
+            // config
+            if (instance.minSellsPerHour <= 0)
+                instance.minSellsPerHour = 50;
+            if (instance.minWeeklyVolume <= 0)
+                instance.minWeeklyVolume = 500_000;
+            if (instance.minProfitPerHour < 0)
+                instance.minProfitPerHour = 10_000;
             System.out.println("[Fuji] Config loaded. targets=" + instance.targets.size()
                     + " blacklist=" + instance.bazaarBlacklist.size()
-                    + " npcSellMode=" + instance.npcSellMode);
+                    + " npcSellMode=" + instance.npcSellMode
+                    + " debugMode=" + instance.debugMode
+                    + " minSellsPerHour=" + instance.minSellsPerHour
+                    + " minWeeklyVolume=" + instance.minWeeklyVolume
+                    + " minProfitPerHour=" + instance.minProfitPerHour);
         } catch (Exception e) {
             System.err.println("[Fuji] Failed to load config: " + e.getMessage());
             instance = new ModConfig();
@@ -70,7 +112,11 @@ public class ModConfig {
             new GsonBuilder().setPrettyPrinting().create().toJson(instance, w);
             System.out.println("[Fuji] Config saved. targets=" + instance.targets.size()
                     + " blacklist=" + instance.bazaarBlacklist.size()
-                    + " npcSellMode=" + instance.npcSellMode);
+                    + " npcSellMode=" + instance.npcSellMode
+                    + " debugMode=" + instance.debugMode
+                    + " minSellsPerHour=" + instance.minSellsPerHour
+                    + " minWeeklyVolume=" + instance.minWeeklyVolume
+                    + " minProfitPerHour=" + instance.minProfitPerHour);
         } catch (Exception e) {
             System.err.println("[Fuji] Failed to save config: " + e.getMessage());
         }

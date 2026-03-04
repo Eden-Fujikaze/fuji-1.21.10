@@ -15,7 +15,7 @@ import java.util.Map;
  * Scores every Hypixel Bazaar item and picks the best one to flip (or
  * NPC-sell, when {@link ModConfig#npcSellMode} is enabled).
  *
- * <h3>Flip mode (default)</h3>
+ * Flip mode (default)
  * 
  * <pre>
  * profit/item  = askPrice - bidPrice          (spread)
@@ -44,6 +44,7 @@ import java.util.Map;
  * </ul>
  */
 public class ItemSelector {
+    public static volatile ItemScore lastBest = null;
 
     public static CompletableFuture<ItemScore> selectBestItem(double purse) {
         return CompletableFuture.supplyAsync(() -> {
@@ -130,9 +131,12 @@ public class ItemSelector {
                             salesPerWeek = Math.min(buyMovingWeek, sellMovingWeek) / askPrice;
                         }
 
-                        double weeklyProfit = profitPerItem * salesPerWeek / ItemScore.HOURS_PER_WEEK;
+                        double profitPerHour = profitPerItem * salesPerWeek / ItemScore.HOURS_PER_WEEK;
 
-                        if (weeklyProfit <= 0)
+                        if (profitPerHour <= 0)
+                            continue;
+
+                        if (profitPerHour < ModConfig.get().minProfitPerHour)
                             continue;
 
                         String displayName = toDisplayName(productId);
@@ -186,6 +190,7 @@ public class ItemSelector {
                 }
 
                 ItemScore best = candidates.get(0);
+                lastBest = best;
                 System.out.println("[ItemSelector] Selected: " + best.displayName);
                 return best;
 

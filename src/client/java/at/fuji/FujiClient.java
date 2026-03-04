@@ -2,7 +2,6 @@ package at.fuji;
 
 import at.fuji.bazaar.BazaarWorker;
 import at.fuji.bazaar.HypixelBazaarApi;
-import at.fuji.bazaar.ItemSelector;
 import at.fuji.render.*;
 import at.fuji.target.*;
 import at.fuji.ui.FujiScreen;
@@ -21,7 +20,6 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
 
 public class FujiClient implements ClientModInitializer {
-
 	public static final KeyBinding.Category FUJI_CATEGORY = KeyBinding.Category
 			.create(Identifier.of("fuji", "fuji"));
 
@@ -65,21 +63,6 @@ public class FujiClient implements ClientModInitializer {
 				}
 			}
 		});
-
-		// HUD overlay
-		HudElementRegistry.addLast(
-				Identifier.of("fuji", "bazaar_status"),
-				(drawContext, tickCounter) -> {
-
-					MinecraftClient mc = MinecraftClient.getInstance();
-					if (mc.world == null)
-						return;
-					String text = BazaarWorker.isEnabled() ? "Bazaar Bot: ON" : "Bazaar Bot: OFF";
-					int color = BazaarWorker.isEnabled() ? 0xFF00FF00 : 0xFFFF0000;
-					drawContext.drawTextWithShadow(mc.textRenderer, text, 5, 80, color);
-				});
-
-		// World render
 		WorldRenderEvents.AFTER_ENTITIES.register(context -> {
 			MinecraftClient mc = MinecraftClient.getInstance();
 			if (mc.world == null)
@@ -89,7 +72,6 @@ public class FujiClient implements ClientModInitializer {
 
 			VertexConsumerProvider provider = context.consumers();
 
-			// Sodium / fallback safety
 			if (provider == null) {
 				provider = mc.getBufferBuilders().getEntityVertexConsumers();
 			}
@@ -108,10 +90,21 @@ public class FujiClient implements ClientModInitializer {
 				}
 			}
 
-			// Flush if immediate provider
 			if (provider instanceof VertexConsumerProvider.Immediate immediate) {
 				immediate.draw();
 			}
 		});
+
+		HudElementRegistry.addLast(
+				Identifier.of("fuji", "bazaar_status"),
+				(drawContext, tickCounter) -> {
+
+					MinecraftClient mc = MinecraftClient.getInstance();
+					if (mc.world == null)
+						return;
+					String text = BazaarWorker.isEnabled() ? "Bazaar Bot: ON" : "Bazaar Bot: OFF";
+					int color = BazaarWorker.isEnabled() ? 0xFF00FF00 : 0xFFFF0000;
+					drawContext.drawTextWithShadow(mc.textRenderer, text, 5, 80, color);
+				});
 	}
 }
