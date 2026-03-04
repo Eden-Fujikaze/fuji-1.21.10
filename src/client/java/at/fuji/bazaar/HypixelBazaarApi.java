@@ -119,6 +119,46 @@ public class HypixelBazaarApi {
         }
     }
 
+    /**
+     * Returns the fixed NPC sell price for {@code itemId} from
+     * {@code quick_status.npcSellPrice}.
+     *
+     * <p>
+     * Returns {@code 0.0} when the field is absent (item has no NPC value).
+     * Used by {@code BazaarWorker.fetchNpcPriceAndCheck()} to compare against the
+     * current buy-order price and decide whether to cancel+NPC-sell or flip.
+     */
+    public static CompletableFuture<Double> getNpcSellPrice(String itemId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                refreshBazaarApi();
+                if (cachedJson == null)
+                    return 0.0;
+
+                JsonObject products = cachedJson.getAsJsonObject("products");
+                if (products == null || !products.has(itemId)) {
+                    System.err.println("[BazaarApi] Item not found for NPC price: " + itemId);
+                    return 0.0;
+                }
+
+                JsonObject quickStatus = products
+                        .getAsJsonObject(itemId)
+                        .getAsJsonObject("quick_status");
+
+                if (quickStatus == null || !quickStatus.has("npcSellPrice"))
+                    return 0.0;
+
+                double npcPrice = quickStatus.get("npcSellPrice").getAsDouble();
+                System.out.println("[BazaarApi] npcSellPrice(" + itemId + ") = " + npcPrice);
+                return npcPrice;
+
+            } catch (Exception e) {
+                System.err.println("[BazaarApi] Failed to fetch NPC price for " + itemId + ": " + e.getMessage());
+                return 0.0;
+            }
+        });
+    }
+
     // ── Internal refresh ──────────────────────────────────────────────────────
 
     private static synchronized void refreshBazaarApi() throws Exception {

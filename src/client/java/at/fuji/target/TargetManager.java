@@ -60,8 +60,6 @@ public class TargetManager {
             if (config.mobName != null) {
                 Vec3d pos = EntityUtils.findTarget(config.mobName, config.radius);
                 config.currentPos = pos;
-                System.out.println("[TargetManager] " + config.mobName + " radius=" + config.radius + " pos=" + pos
-                        + " waypoint=" + config.waypointEnabled + " tracer=" + config.tracerEnabled);
             }
         }
     }

@@ -12,4 +12,8 @@ public interface Sidebar {
     void render(DrawContext gfx, int mouseX, int mouseY, float delta);
 
     void clearWidgets();
+
+    default boolean mouseScrolled(double mouseX, double mouseY, double amount) {
+        return false;
+    }
 }

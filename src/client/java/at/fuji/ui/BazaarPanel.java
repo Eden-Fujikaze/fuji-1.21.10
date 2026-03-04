@@ -17,20 +17,33 @@ public class BazaarPanel implements Sidebar {
     private static final int COL_BORDER = 0xFF2A2A3F;
     private static final int COL_ACCENT = 0xFFFF6644;
     private static final int COL_RED = 0xFFFF4455;
+    private static final int COL_GREEN = 0xFF44FF88;
     private static final int COL_TEXT = 0xFFE0E0F0;
     private static final int COL_TEXT_DIM = 0xFF808099;
+    private static final int COL_SCROLLBAR = 0xFF3A3A5A;
+    private static final int COL_SCROLL_TH = 0xFF6060A0;
 
     private static final int ROW_HEIGHT = 28;
     private static final int HEADER_H = 32;
     private static final int FOOTER_H = 40;
     private static final int PADDING = 14;
 
+    private static final int NPC_BTN_W = 60;
+    private static final int NPC_BTN_H = 14;
+
+    /** Width of the scrollbar strip on the right edge. */
+    private static final int SB_W = 4;
+
     private FujiScreen parent;
     private int px, py, pw, ph;
+
+    private int scrollOffset = 0;
 
     private boolean addRowVisible = false;
     private TextFieldWidget nameBox;
     private final List<Object> managedWidgets = new ArrayList<>();
+
+    // ── Sidebar contract ──────────────────────────────────────────────────────
 
     @Override
     public String getLabel() {
@@ -49,6 +62,7 @@ public class BazaarPanel implements Sidebar {
         this.py = panelY;
         this.pw = panelW;
         this.ph = panelH;
+        scrollOffset = 0;
         rebuildWidgets();
     }
 
@@ -60,6 +74,41 @@ public class BazaarPanel implements Sidebar {
         });
         managedWidgets.clear();
     }
+
+    /**
+     * Forward mouse-wheel events here from FujiScreen:
+     * if (activeSidebar instanceof BazaarPanel bp) bp.mouseScrolled(mx, my,
+     * amount);
+     * Or add a default no-op to the Sidebar interface and call it on all panels.
+     */
+    public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
+        int listTop = py + HEADER_H;
+        int listBottom = py + ph - FOOTER_H;
+        if (mouseX < px || mouseX > px + pw || mouseY < listTop || mouseY > listBottom)
+            return false;
+
+        scrollOffset -= (int) (amount * ROW_HEIGHT);
+        clampScroll();
+        rebuildWidgets();
+        return true;
+    }
+
+    // ── Scroll helpers ────────────────────────────────────────────────────────
+
+    private int listViewportH() {
+        return ph - HEADER_H - FOOTER_H;
+    }
+
+    private int maxScroll() {
+        int contentH = ModConfig.get().bazaarBlacklist.size() * ROW_HEIGHT;
+        return Math.max(0, contentH - listViewportH());
+    }
+
+    private void clampScroll() {
+        scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll()));
+    }
+
+    // ── Widget helpers ────────────────────────────────────────────────────────
 
     private void addBtn(ButtonWidget btn) {
         managedWidgets.add(btn);
@@ -73,14 +122,34 @@ public class BazaarPanel implements Sidebar {
 
     private void rebuildWidgets() {
         clearWidgets();
-        List<String> blacklist = ModConfig.get().bazaarBlacklist;
+        clampScroll();
 
+        List<String> blacklist = ModConfig.get().bazaarBlacklist;
+        int listTop = py + HEADER_H;
+        int listBottom = py + ph - FOOTER_H;
+
+        // NPC Sell toggle
+        boolean npcOn = ModConfig.get().npcSellMode;
+        addBtn(styledButton(
+                npcOn ? "NPC \u25CF" : "NPC \u25CB",
+                px + pw - PADDING - NPC_BTN_W,
+                py + (HEADER_H - NPC_BTN_H) / 2,
+                NPC_BTN_W, NPC_BTN_H,
+                btn -> {
+                    ModConfig.get().npcSellMode = !ModConfig.get().npcSellMode;
+                    ModConfig.save();
+                    rebuildWidgets();
+                }));
+
+        // REMOVE buttons — only register rows visible in the viewport
         for (int i = 0; i < blacklist.size(); i++) {
             final int idx = i;
-            int rowY = py + HEADER_H + i * ROW_HEIGHT;
-            int btnY = rowY + (ROW_HEIGHT - 14) / 2;
+            int rowY = listTop + i * ROW_HEIGHT - scrollOffset;
+            if (rowY + ROW_HEIGHT <= listTop || rowY >= listBottom)
+                continue;
 
-            addBtn(styledButton("REMOVE", px + pw - PADDING - 44, btnY, 44, 14, btn -> {
+            int btnY = rowY + (ROW_HEIGHT - 14) / 2;
+            addBtn(styledButton("REMOVE", px + pw - PADDING - SB_W - 44, btnY, 44, 14, btn -> {
                 ModConfig.get().bazaarBlacklist.remove(idx);
                 ModConfig.save();
                 rebuildWidgets();
@@ -118,37 +187,65 @@ public class BazaarPanel implements Sidebar {
         }
     }
 
+    // ── Render ────────────────────────────────────────────────────────────────
+
     @Override
     public void render(DrawContext gfx, int mouseX, int mouseY, float delta) {
-        // Header
+        boolean npcOn = ModConfig.get().npcSellMode;
+        List<String> blacklist = ModConfig.get().bazaarBlacklist;
+        int listTop = py + HEADER_H;
+        int listBottom = py + ph - FOOTER_H;
+        int vpH = listViewportH();
+        int contentH = blacklist.size() * ROW_HEIGHT;
+
+        // Header (outside scissor — always visible)
         gfx.fill(px, py, px + pw, py + HEADER_H, 0xFF0A0A0F);
         gfx.fill(px, py + HEADER_H - 1, px + pw, py + HEADER_H, COL_BORDER);
         gfx.drawText(MinecraftClient.getInstance().textRenderer, "BAZAAR BLACKLIST",
                 px + PADDING, py + (HEADER_H - 8) / 2, COL_ACCENT, false);
         gfx.drawText(MinecraftClient.getInstance().textRenderer,
-                ModConfig.get().bazaarBlacklist.size() + " ITEMS",
+                blacklist.size() + " ITEMS",
                 px + PADDING + 110, py + (HEADER_H - 8) / 2, COL_TEXT_DIM, false);
 
-        // Column header
-        gfx.drawText(MinecraftClient.getInstance().textRenderer, "PRODUCT ID",
-                px + PADDING, py + HEADER_H + 2, COL_TEXT_DIM, false);
+        int npcLabelX = px + pw - PADDING - NPC_BTN_W - 6
+                - MinecraftClient.getInstance().textRenderer.getWidth("NPC SELL");
+        gfx.drawText(MinecraftClient.getInstance().textRenderer, "NPC SELL",
+                npcLabelX, py + (HEADER_H - 8) / 2,
+                npcOn ? COL_GREEN : COL_TEXT_DIM, false);
 
-        // Rows
-        List<String> blacklist = ModConfig.get().bazaarBlacklist;
+        // Scrollable list (scissored)
+        gfx.enableScissor(px, listTop, px + pw - SB_W, listBottom);
+
+        gfx.drawText(MinecraftClient.getInstance().textRenderer, "PRODUCT ID",
+                px + PADDING, listTop + 2 - scrollOffset, COL_TEXT_DIM, false);
+
         for (int i = 0; i < blacklist.size(); i++) {
-            int rowY = py + HEADER_H + i * ROW_HEIGHT;
-            boolean hovered = mouseX >= px && mouseX <= px + pw
+            int rowY = listTop + i * ROW_HEIGHT - scrollOffset;
+            if (rowY + ROW_HEIGHT <= listTop || rowY >= listBottom)
+                continue;
+
+            boolean hovered = mouseX >= px && mouseX < px + pw - SB_W
                     && mouseY >= rowY && mouseY < rowY + ROW_HEIGHT;
 
-            gfx.fill(px, rowY, px + pw, rowY + ROW_HEIGHT,
+            gfx.fill(px, rowY, px + pw - SB_W, rowY + ROW_HEIGHT,
                     hovered ? COL_ROW_HOVER : (i % 2 == 0 ? COL_ROW_EVEN : COL_PANEL));
             gfx.fill(px, rowY, px + 2, rowY + ROW_HEIGHT, COL_RED);
-
             gfx.drawText(MinecraftClient.getInstance().textRenderer,
                     blacklist.get(i),
                     px + PADDING, rowY + (ROW_HEIGHT - 8) / 2, COL_TEXT, false);
+            gfx.fill(px, rowY + ROW_HEIGHT - 1, px + pw - SB_W, rowY + ROW_HEIGHT, COL_BORDER);
+        }
 
-            gfx.fill(px, rowY + ROW_HEIGHT - 1, px + pw, rowY + ROW_HEIGHT, COL_BORDER);
+        gfx.disableScissor();
+
+        // Scrollbar
+        int sbX = px + pw - SB_W;
+        gfx.fill(sbX, listTop, sbX + SB_W, listBottom, COL_SCROLLBAR);
+        if (contentH > vpH) {
+            int thumbH = Math.max(16, vpH * vpH / contentH);
+            int thumbRange = vpH - thumbH;
+            int thumbY = listTop + (maxScroll() > 0 ? thumbRange * scrollOffset / maxScroll() : 0);
+            gfx.fill(sbX, thumbY, sbX + SB_W, thumbY + thumbH, COL_SCROLL_TH);
         }
 
         // Footer separator

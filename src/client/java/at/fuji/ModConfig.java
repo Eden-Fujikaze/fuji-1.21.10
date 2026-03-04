@@ -20,6 +20,13 @@ public class ModConfig {
             "ESSENCE_SPIDER", "ESSENCE_GOLD", "ESSENCE_DIAMOND",
             "ESSENCE_ICE", "ESSENCE_CRIMSON", "ESSENCE_HOLLOW"));
 
+    /**
+     * When true, the BazaarWorker cancels filled buy orders instead of flipping
+     * them, picks up the items from stash, and sells them directly to the NPC
+     * via /trades — but only when npcSellPrice > buyOrderPrice.
+     */
+    public boolean npcSellMode = false;
+
     public static class SavedTarget {
         public String mobName;
         public boolean waypointEnabled;
@@ -50,7 +57,8 @@ public class ModConfig {
             if (instance.bazaarBlacklist == null)
                 instance.bazaarBlacklist = new ArrayList<>();
             System.out.println("[Fuji] Config loaded. targets=" + instance.targets.size()
-                    + " blacklist=" + instance.bazaarBlacklist.size());
+                    + " blacklist=" + instance.bazaarBlacklist.size()
+                    + " npcSellMode=" + instance.npcSellMode);
         } catch (Exception e) {
             System.err.println("[Fuji] Failed to load config: " + e.getMessage());
             instance = new ModConfig();
@@ -61,7 +69,8 @@ public class ModConfig {
         try (Writer w = Files.newBufferedWriter(CONFIG_PATH)) {
             new GsonBuilder().setPrettyPrinting().create().toJson(instance, w);
             System.out.println("[Fuji] Config saved. targets=" + instance.targets.size()
-                    + " blacklist=" + instance.bazaarBlacklist.size());
+                    + " blacklist=" + instance.bazaarBlacklist.size()
+                    + " npcSellMode=" + instance.npcSellMode);
         } catch (Exception e) {
             System.err.println("[Fuji] Failed to save config: " + e.getMessage());
         }

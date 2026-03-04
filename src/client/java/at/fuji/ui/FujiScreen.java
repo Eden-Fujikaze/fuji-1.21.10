@@ -31,7 +31,7 @@ public class FujiScreen extends Screen {
     public FujiScreen() {
         super(Text.literal("Fuji"));
         categories.add(new TrackingPanel());
-        categories.add(new BazaarPanel()); // ← new
+        categories.add(new BazaarPanel());
     }
 
     public void addWidget(net.minecraft.client.gui.widget.ClickableWidget widget) {
@@ -73,6 +73,13 @@ public class FujiScreen extends Screen {
         int contentW = SCREEN_WIDTH - SIDEBAR_W;
         int contentH = SCREEN_HEIGHT - TOP_BAR_H;
         categories.get(selectedCategory).init(this, contentX, contentY, contentW, contentH);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        if (categories.get(selectedCategory).mouseScrolled(mouseX, mouseY, verticalAmount))
+            return true;
+        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
     @Override
