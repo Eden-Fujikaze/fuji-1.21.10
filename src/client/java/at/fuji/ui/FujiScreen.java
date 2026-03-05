@@ -12,25 +12,13 @@ import net.minecraft.text.Text;
 
 public class FujiScreen extends Screen {
 
-    // ─────────────────────────────────────────────
-    // Default + Minimum sizes
-    // ─────────────────────────────────────────────
-
     private static final int DEFAULT_W = 640;
     private static final int DEFAULT_H = 380;
-
     private static final int MIN_W = 420;
     private static final int MIN_H = 260;
-
     private static final int SIDEBAR_W = 110;
     private static final int TOP_BAR_H = 36;
-
-    // Resize grip size
     private static final int RESIZE_ZONE = 12;
-
-    // ─────────────────────────────────────────────
-    // Colors
-    // ─────────────────────────────────────────────
 
     private static final int COL_BG = 0xFF0A0A0F;
     private static final int COL_PANEL = 0xFF12121A;
@@ -40,23 +28,13 @@ public class FujiScreen extends Screen {
     private static final int COL_TEXT_DIM = 0xFF606075;
     private static final int COL_SEL_BG = 0xFF1A1A28;
 
-    // ─────────────────────────────────────────────
-    // Window State
-    // ─────────────────────────────────────────────
-
     private int sx, sy;
     private int screenW = DEFAULT_W;
     private int screenH = DEFAULT_H;
 
     private boolean dragging = false;
     private boolean resizing = false;
-
-    private int dragOffsetX;
-    private int dragOffsetY;
-
-    // ─────────────────────────────────────────────
-    // Sidebar system
-    // ─────────────────────────────────────────────
+    private int dragOffsetX, dragOffsetY;
 
     private final List<Sidebar> categories = new ArrayList<>();
     private int selectedCategory = 0;
@@ -78,17 +56,12 @@ public class FujiScreen extends Screen {
 
     @Override
     protected void init() {
-        // Center only first time
         if (sx == 0 && sy == 0) {
             sx = (this.width - screenW) / 2;
             sy = (this.height - screenH) / 2;
         }
         rebuildAll();
     }
-
-    // ─────────────────────────────────────────────
-    // Layout rebuild
-    // ─────────────────────────────────────────────
 
     private void rebuildAll() {
         this.clearChildren();
@@ -98,7 +71,6 @@ public class FujiScreen extends Screen {
             final int idx = i;
             Sidebar cat = categories.get(i);
             int btnY = sy + TOP_BAR_H + 12 + i * 28;
-
             ButtonWidget btn = ButtonWidget.builder(
                     Text.literal(cat.getLabel()),
                     b -> {
@@ -108,7 +80,6 @@ public class FujiScreen extends Screen {
                     })
                     .dimensions(sx + 6, btnY, SIDEBAR_W - 12, 20)
                     .build();
-
             sidebarButtons.add(btn);
             this.addDrawableChild(btn);
         }
@@ -117,28 +88,24 @@ public class FujiScreen extends Screen {
         int contentY = sy + TOP_BAR_H;
         int contentW = screenW - SIDEBAR_W;
         int contentH = screenH - TOP_BAR_H;
-
-        categories.get(selectedCategory)
-                .init(this, contentX, contentY, contentW, contentH);
+        categories.get(selectedCategory).init(this, contentX, contentY, contentW, contentH);
     }
 
-    // ─────────────────────────────────────────────
-    // Mouse Handling (Drag + Resize)
-    // ─────────────────────────────────────────────
+    // ── Mouse ─────────────────────────────────────────────────────────────────
 
     @Override
     public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubleClick) {
-
         double mouseX = click.x();
         double mouseY = click.y();
 
-        // Resize zone
+        // Delegate custom hit-areas (colour swatches, etc.) first
+        if (categories.get(selectedCategory).onMouseClicked(mouseX, mouseY))
+            return true;
+
         if (isInResizeZone(mouseX, mouseY)) {
             resizing = true;
             return true;
         }
-
-        // Drag top bar
         if (mouseY >= sy && mouseY <= sy + TOP_BAR_H
                 && mouseX >= sx && mouseX <= sx + screenW) {
             dragging = true;
@@ -146,7 +113,6 @@ public class FujiScreen extends Screen {
             dragOffsetY = (int) mouseY - sy;
             return true;
         }
-
         return super.mouseClicked(click, doubleClick);
     }
 
@@ -158,12 +124,9 @@ public class FujiScreen extends Screen {
     }
 
     @Override
-    public boolean mouseDragged(net.minecraft.client.gui.Click click,
-            double deltaX, double deltaY) {
-
+    public boolean mouseDragged(net.minecraft.client.gui.Click click, double dx, double dy) {
         double mouseX = click.x();
         double mouseY = click.y();
-
         if (dragging) {
             sx = (int) mouseX - dragOffsetX;
             sy = (int) mouseY - dragOffsetY;
@@ -171,25 +134,25 @@ public class FujiScreen extends Screen {
             rebuildAll();
             return true;
         }
-
         if (resizing) {
-            screenW = (int) (mouseX - sx);
-            screenH = (int) (mouseY - sy);
-
-            screenW = Math.max(MIN_W, screenW);
-            screenH = Math.max(MIN_H, screenH);
-
+            screenW = Math.max(MIN_W, (int) (mouseX - sx));
+            screenH = Math.max(MIN_H, (int) (mouseY - sy));
             clampToScreen();
             rebuildAll();
             return true;
         }
-
-        return super.mouseDragged(click, deltaX, deltaY);
+        return super.mouseDragged(click, dx, dy);
     }
 
-    private boolean isInResizeZone(double mouseX, double mouseY) {
-        return mouseX >= sx + screenW - RESIZE_ZONE &&
-                mouseY >= sy + screenH - RESIZE_ZONE;
+    @Override
+    public boolean mouseScrolled(double mx, double my, double h, double v) {
+        if (categories.get(selectedCategory).mouseScrolled(mx, my, v))
+            return true;
+        return super.mouseScrolled(mx, my, h, v);
+    }
+
+    private boolean isInResizeZone(double mx, double my) {
+        return mx >= sx + screenW - RESIZE_ZONE && my >= sy + screenH - RESIZE_ZONE;
     }
 
     private void clampToScreen() {
@@ -197,95 +160,30 @@ public class FujiScreen extends Screen {
         sy = Math.max(0, Math.min(sy, this.height - screenH));
     }
 
-    // ─────────────────────────────────────────────
-    // Scroll pass-through
-    // ─────────────────────────────────────────────
-
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY,
-            double horizontalAmount, double verticalAmount) {
-        if (categories.get(selectedCategory)
-                .mouseScrolled(mouseX, mouseY, verticalAmount))
-            return true;
-
-        return super.mouseScrolled(mouseX, mouseY,
-                horizontalAmount, verticalAmount);
-    }
-
-    // ─────────────────────────────────────────────
-    // Rendering
-    // ─────────────────────────────────────────────
+    // ── Render ────────────────────────────────────────────────────────────────
 
     @Override
     public void render(DrawContext gfx, int mouseX, int mouseY, float delta) {
-
         gfx.fill(0, 0, this.width, this.height, 0xBB050508);
-
-        // Shadow
-        gfx.fill(sx + 5, sy + 5,
-                sx + screenW + 5, sy + screenH + 5,
-                0x44000000);
-
-        // Main panel
+        gfx.fill(sx + 5, sy + 5, sx + screenW + 5, sy + screenH + 5, 0x44000000);
         gfx.fill(sx, sy, sx + screenW, sy + screenH, COL_PANEL);
-
-        // Top bar
         gfx.fill(sx, sy, sx + screenW, sy + TOP_BAR_H, COL_BG);
-        gfx.fill(sx, sy + TOP_BAR_H - 1,
-                sx + screenW, sy + TOP_BAR_H, COL_BORDER);
-
+        gfx.fill(sx, sy + TOP_BAR_H - 1, sx + screenW, sy + TOP_BAR_H, COL_BORDER);
         gfx.fill(sx, sy, sx + screenW, sy + 2, COL_ACCENT);
-
-        gfx.drawText(this.textRenderer,
-                "FUJI",
-                sx + 12,
-                sy + (TOP_BAR_H - 8) / 2,
-                COL_ACCENT,
-                false);
-
-        gfx.drawText(this.textRenderer,
-                "//  " + categories.get(selectedCategory).getLabel(),
-                sx + 42,
-                sy + (TOP_BAR_H - 8) / 2,
-                COL_TEXT_DIM,
-                false);
-
-        // Sidebar
-        gfx.fill(sx, sy + TOP_BAR_H,
-                sx + SIDEBAR_W, sy + screenH,
-                COL_SIDEBAR);
-
-        gfx.fill(sx + SIDEBAR_W - 1,
-                sy + TOP_BAR_H,
-                sx + SIDEBAR_W,
-                sy + screenH,
-                COL_BORDER);
-
-        // Selected indicator
+        gfx.drawText(this.textRenderer, "FUJI", sx + 12, sy + (TOP_BAR_H - 8) / 2, COL_ACCENT, false);
+        gfx.drawText(this.textRenderer, "//  " + categories.get(selectedCategory).getLabel(),
+                sx + 42, sy + (TOP_BAR_H - 8) / 2, COL_TEXT_DIM, false);
+        gfx.fill(sx, sy + TOP_BAR_H, sx + SIDEBAR_W, sy + screenH, COL_SIDEBAR);
+        gfx.fill(sx + SIDEBAR_W - 1, sy + TOP_BAR_H, sx + SIDEBAR_W, sy + screenH, COL_BORDER);
         for (int i = 0; i < categories.size(); i++) {
             int btnY = sy + TOP_BAR_H + 12 + i * 28;
             if (i == selectedCategory) {
-                gfx.fill(sx, btnY - 2,
-                        sx + SIDEBAR_W - 1,
-                        btnY + 22,
-                        COL_SEL_BG);
-
-                gfx.fill(sx,
-                        btnY - 2,
-                        sx + 2,
-                        btnY + 22,
-                        categories.get(i).getAccentColor());
+                gfx.fill(sx, btnY - 2, sx + SIDEBAR_W - 1, btnY + 22, COL_SEL_BG);
+                gfx.fill(sx, btnY - 2, sx + 2, btnY + 22, categories.get(i).getAccentColor());
             }
         }
-
-        // Resize corner indicator
-        gfx.fill(sx + screenW - 8, sy + screenH - 2,
-                sx + screenW, sy + screenH,
-                COL_ACCENT);
-
-        categories.get(selectedCategory)
-                .render(gfx, mouseX, mouseY, delta);
-
+        gfx.fill(sx + screenW - 8, sy + screenH - 2, sx + screenW, sy + screenH, COL_ACCENT);
+        categories.get(selectedCategory).render(gfx, mouseX, mouseY, delta);
         super.render(gfx, mouseX, mouseY, delta);
     }
 
