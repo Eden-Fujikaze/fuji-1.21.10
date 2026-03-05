@@ -12,58 +12,52 @@ public class ModConfig {
     private static final Path CONFIG_PATH = FabricLoader.getInstance()
             .getConfigDir().resolve("fuji.json");
 
+    // ── API ───────────────────────────────────────────────────────────────────
     public String apiKey = "";
+
+    // ── Targets ───────────────────────────────────────────────────────────────
     public List<SavedTarget> targets = new ArrayList<>();
+
+    // ── Bazaar blacklist ──────────────────────────────────────────────────────
     public List<String> bazaarBlacklist = new ArrayList<>(List.of(
             "ESSENCE_UNDEAD", "ESSENCE_DRAGON", "ESSENCE_WITHER",
             "ESSENCE_SPIDER", "ESSENCE_GOLD", "ESSENCE_DIAMOND",
             "ESSENCE_ICE", "ESSENCE_CRIMSON", "ESSENCE_HOLLOW"));
 
+    // ── Bazaar mode toggles ───────────────────────────────────────────────────
     /**
-     * When true, the BazaarWorker cancels filled buy orders instead of flipping
-     * them, picks up the items from stash, and sells them directly to the NPC
-     * via /trades — but only when npcSellPrice > buyOrderPrice.
+     * When true, bot collects filled buy order → sells at 2× ask → cancels sell →
+     * items return.
      */
     public boolean npcSellMode = false;
-
-    /**
-     * Debug mode — limits each purchase to exactly 1 item so you can verify
-     * the full buy→flip cycle works without committing real coin volume.
-     * BazaarWorker should check this and cap purchasableAmount at 1.
-     */
+    /** Limits each purchase to 1 item for safe testing. */
     public boolean debugMode = false;
 
-    /**
-     * Minimum sells-per-hour required for an item to be considered.
-     * Filters out slow-moving items whose orders may sit for hours.
-     * Calculated as: min(buyMovingWeek, sellMovingWeek) / askPrice / HOURS_PER_WEEK
-     * Default: 50 items/hr (~1,200/day).
-     */
+    // ── Bazaar filters ────────────────────────────────────────────────────────
     public int minSellsPerHour = 50;
-
-    /**
-     * Minimum raw coin volume on the slower side (min of buy/sell moving week)
-     * required for an item to be considered. Guards against illiquid items where
-     * a single large order can distort the weekly average.
-     * Default: 500,000 coins/week.
-     */
     public int minWeeklyVolume = 500_000;
 
-    /**
-     * Minimum total profit expected from one full order batch
-     * (profitPerItem * purchasableAmount). Filters out items where the spread
-     * looks fine individually but the batch is too small to be worthwhile.
-     * Default: 10,000 coins.
-     */
+    /** Minimum profit per hour (coins). Filter is only applied when enabled. */
     public int minProfitPerHour = 10_000;
+    public boolean minProfitPerHourEnabled = true;
 
+    /** Minimum total profit for one full order batch (spread × amount). */
+    public int minTotalProfit = 50_000;
+    public boolean minTotalProfitEnabled = false;
+
+    // ── Saved target ──────────────────────────────────────────────────────────
     public static class SavedTarget {
         public String mobName;
         public boolean waypointEnabled;
         public boolean tracerEnabled;
+        public boolean enabled = true;
+        public boolean alertEnabled = false;
+        public boolean showDistanceEnabled = false;
         public float radius;
+        public int color = 0xFFB044FF;
     }
 
+    // ── Singleton ─────────────────────────────────────────────────────────────
     private static ModConfig instance;
 
     public static ModConfig get() {
@@ -74,7 +68,6 @@ public class ModConfig {
 
     public static void load() {
         if (!Files.exists(CONFIG_PATH)) {
-            System.out.println("[Fuji] No config found, using defaults.");
             instance = new ModConfig();
             return;
         }
@@ -86,21 +79,14 @@ public class ModConfig {
                 instance.targets = new ArrayList<>();
             if (instance.bazaarBlacklist == null)
                 instance.bazaarBlacklist = new ArrayList<>();
-            // Migrate: ensure new numeric fields have sensible defaults if absent from old
-            // config
             if (instance.minSellsPerHour <= 0)
                 instance.minSellsPerHour = 50;
             if (instance.minWeeklyVolume <= 0)
                 instance.minWeeklyVolume = 500_000;
             if (instance.minProfitPerHour < 0)
                 instance.minProfitPerHour = 10_000;
-            System.out.println("[Fuji] Config loaded. targets=" + instance.targets.size()
-                    + " blacklist=" + instance.bazaarBlacklist.size()
-                    + " npcSellMode=" + instance.npcSellMode
-                    + " debugMode=" + instance.debugMode
-                    + " minSellsPerHour=" + instance.minSellsPerHour
-                    + " minWeeklyVolume=" + instance.minWeeklyVolume
-                    + " minProfitPerHour=" + instance.minProfitPerHour);
+            if (instance.minTotalProfit <= 0)
+                instance.minTotalProfit = 50_000;
         } catch (Exception e) {
             System.err.println("[Fuji] Failed to load config: " + e.getMessage());
             instance = new ModConfig();
@@ -110,13 +96,6 @@ public class ModConfig {
     public static void save() {
         try (Writer w = Files.newBufferedWriter(CONFIG_PATH)) {
             new GsonBuilder().setPrettyPrinting().create().toJson(instance, w);
-            System.out.println("[Fuji] Config saved. targets=" + instance.targets.size()
-                    + " blacklist=" + instance.bazaarBlacklist.size()
-                    + " npcSellMode=" + instance.npcSellMode
-                    + " debugMode=" + instance.debugMode
-                    + " minSellsPerHour=" + instance.minSellsPerHour
-                    + " minWeeklyVolume=" + instance.minWeeklyVolume
-                    + " minProfitPerHour=" + instance.minProfitPerHour);
         } catch (Exception e) {
             System.err.println("[Fuji] Failed to save config: " + e.getMessage());
         }
@@ -129,23 +108,26 @@ public class ModConfig {
             s.mobName = t.mobName;
             s.waypointEnabled = t.waypointEnabled;
             s.tracerEnabled = t.tracerEnabled;
+            s.enabled = t.enabled;
+            s.alertEnabled = t.alertEnabled;
+            s.showDistanceEnabled = t.showDistanceEnabled;
             s.radius = t.radius;
+            s.color = t.color;
             targets.add(s);
         }
-        System.out.println("[Fuji] synced " + targets.size() + " targets.");
     }
 
     public void loadIntoTargetManager() {
-        if (targets == null || targets.isEmpty()) {
-            System.out.println("[Fuji] No saved targets, skipping load.");
+        if (targets == null || targets.isEmpty())
             return;
-        }
         at.fuji.target.TargetManager.targets.clear();
         for (SavedTarget s : targets) {
-            at.fuji.target.TargetConfig config = new at.fuji.target.TargetConfig(
-                    s.mobName, s.waypointEnabled, s.tracerEnabled, s.radius);
-            at.fuji.target.TargetManager.targets.add(config);
+            TargetConfig c = new TargetConfig(s.mobName, s.waypointEnabled, s.tracerEnabled, s.radius);
+            c.enabled = s.enabled;
+            c.alertEnabled = s.alertEnabled;
+            c.showDistanceEnabled = s.showDistanceEnabled;
+            c.color = s.color;
+            at.fuji.target.TargetManager.targets.add(c);
         }
-        System.out.println("[Fuji] Loaded " + targets.size() + " targets.");
     }
 }

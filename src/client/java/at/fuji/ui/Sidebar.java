@@ -16,4 +16,12 @@ public interface Sidebar {
     default boolean mouseScrolled(double mouseX, double mouseY, double amount) {
         return false;
     }
+
+    /**
+     * Called before ButtonWidget propagation — used for custom-drawn hit areas
+     * (e.g. colour swatches).
+     */
+    default boolean onMouseClicked(double mx, double my) {
+        return false;
+    }
 }

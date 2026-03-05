@@ -1,68 +1,74 @@
 package at.fuji.bazaar;
 
+import at.fuji.ModConfig;
 import com.google.gson.JsonObject;
 
-import at.fuji.ModConfig;
-
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.HashMap;
-import java.util.Map;
 
-/**
- * Scores every Hypixel Bazaar item and picks the best one to flip (or
- * NPC-sell, when {@link ModConfig#npcSellMode} is enabled).
- *
- * Flip mode (default)
- * 
- * <pre>
- * profit/item  = askPrice - bidPrice          (spread)
- * salesPerWeek = min(buyMovingWeek, sellMovingWeek) / askPrice
- * score        = profit/item * salesPerWeek / HOURS_PER_WEEK
- * </pre>
- *
- * <h3>NPC sell mode</h3>
- * Only items where {@code npcSellPrice > askPrice} are considered.
- * 
- * <pre>
- * profit/item  = npcSellPrice - askPrice
- * salesPerWeek = buyMovingWeek / askPrice      (only buy side matters)
- * score        = profit/item * salesPerWeek / HOURS_PER_WEEK
- * </pre>
- *
- * <p>
- * API field semantics (confusingly named by Hypixel):
- * <ul>
- * <li>{@code quick_status.buyPrice} = lowest ask — what you PAY to
- * instant-buy</li>
- * <li>{@code quick_status.sellPrice} = highest bid — what you GET to
- * instant-sell</li>
- * <li>{@code npc_sell_price} (items endpoint) = fixed NPC sell value (0 if not
- * NPC-sellable)</li>
- * </ul>
- */
 public class ItemSelector {
+
+    // ── Result types ──────────────────────────────────────────────────────────
+
+    public static class RejectedItem {
+        public final String productId;
+        public final String displayName;
+        public final double askPrice;
+        public final double bidPrice;
+        public final String reason;
+
+        public RejectedItem(String productId, String displayName,
+                double askPrice, double bidPrice, String reason) {
+            this.productId = productId;
+            this.displayName = displayName;
+            this.askPrice = askPrice;
+            this.bidPrice = bidPrice;
+            this.reason = reason;
+        }
+    }
+
+    public static class ScoringResult {
+        public final List<ItemScore> candidates;
+        public final List<RejectedItem> rejected;
+
+        public ScoringResult(List<ItemScore> candidates, List<RejectedItem> rejected) {
+            this.candidates = candidates;
+            this.rejected = rejected;
+        }
+
+        public ItemScore best() {
+            return candidates.isEmpty() ? null : candidates.get(0);
+        }
+    }
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    public static volatile ScoringResult lastResult = null;
     public static volatile ItemScore lastBest = null;
 
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /** Convenience wrapper — BazaarWorker uses this to pick one item. */
     public static CompletableFuture<ItemScore> selectBestItem(double purse) {
+        return scoreAllItems(purse).thenApply(r -> {
+            if (r == null || r.candidates.isEmpty())
+                return null;
+            return r.candidates.get(0);
+        });
+    }
+
+    public static CompletableFuture<ScoringResult> scoreAllItems(double purse) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 JsonObject allProducts = HypixelBazaarApi.getAllProductsSync();
-                if (allProducts == null) {
-                    System.err.println("[ItemSelector] Could not fetch bazaar data.");
+                if (allProducts == null)
                     return null;
-                }
 
-                // Read fresh every call — avoids stale reference if ModConfig reloads
-                List<String> blacklist = ModConfig.get().bazaarBlacklist;
-                boolean npcMode = ModConfig.get().npcSellMode;
+                ModConfig cfg = ModConfig.get();
+                List<String> blacklist = cfg.bazaarBlacklist;
+                boolean npcMode = cfg.npcSellMode;
 
                 List<ItemScore> candidates = new ArrayList<>();
-                Map<ItemScore, Double> effectiveScores = new HashMap<>();
-                int total = 0, badPrice = 0, noSpread = 0, cantAfford = 0,
-                        manipulated = 0, noNpc = 0;
+                List<RejectedItem> rejected = new ArrayList<>();
 
                 for (String productId : allProducts.keySet()) {
                     if (blacklist.contains(productId))
@@ -70,147 +76,165 @@ public class ItemSelector {
                     if (productId.startsWith("ESSENCE"))
                         continue;
 
-                    total++;
+                    String displayName = HypixelBazaarApi.getItemName(productId);
+                    double askPrice = -1, bidPrice = -1;
 
                     try {
                         JsonObject qs = allProducts
                                 .getAsJsonObject(productId)
                                 .getAsJsonObject("quick_status");
 
-                        // API naming: buyPrice = ask (you pay), sellPrice = bid (you receive)
-                        double askPrice = qs.get("buyPrice").getAsDouble();
-                        double bidPrice = qs.get("sellPrice").getAsDouble();
-                        double buyMovingWeek = qs.get("buyMovingWeek").getAsDouble();
-                        double sellMovingWeek = qs.get("sellMovingWeek").getAsDouble();
-                        int buyOrders = qs.get("buyOrders").getAsInt();
-                        int sellOrders = qs.get("sellOrders").getAsInt();
-                        // NPC sell price lives in the items endpoint, not bazaar quick_status
-                        double npcSellPrice = HypixelBazaarApi.getNpcSellPriceSync(productId);
+                        askPrice = qs.get("buyPrice").getAsDouble();
+                        bidPrice = qs.get("sellPrice").getAsDouble();
+                        double buyVol = qs.get("buyMovingWeek").getAsDouble();
+                        double sellVol = qs.get("sellMovingWeek").getAsDouble();
+                        int buyOrd = qs.get("buyOrders").getAsInt();
+                        int sellOrd = qs.get("sellOrders").getAsInt();
+                        double npcP = HypixelBazaarApi.getNpcSellPriceSync(productId);
 
+                        // ── Hard validity checks ───────────────────────────
                         if (askPrice <= 0 || bidPrice <= 0) {
-                            badPrice++;
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice, "Invalid price"));
+                            continue;
+                        }
+                        // Price floor — filters out cheap garbage like Raw Rabbit (130 coins)
+                        if (askPrice < 500) {
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                    "Price floor (<500)"));
                             continue;
                         }
                         if (purse < askPrice) {
-                            cantAfford++;
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice, "Can't afford"));
                             continue;
                         }
 
-                        double profitPerItem;
-                        double salesPerWeek;
+                        double profitPerItem, salesPerWeek;
 
                         if (npcMode) {
-                            // ── NPC sell path ──────────────────────────────
-                            // Only viable if NPC pays more than buy-order cost
-                            if (npcSellPrice <= askPrice) {
-                                noNpc++;
+                            if (npcP <= askPrice) {
+                                rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                        "NPC " + fmt(npcP) + " ≤ ask"));
                                 continue;
                             }
-                            profitPerItem = npcSellPrice - askPrice;
-                            // Volume: how many items move through buy orders per week
-                            salesPerWeek = buyMovingWeek / askPrice;
-
+                            profitPerItem = npcP - askPrice;
+                            salesPerWeek = buyVol / askPrice;
                         } else {
-                            // ── Flip path ──────────────────────────────────
-                            if (askPrice <= bidPrice) {
-                                noSpread++;
+                            double spread = askPrice - bidPrice;
+                            if (spread <= 0) {
+                                rejected.add(rej(productId, displayName, askPrice, bidPrice, "No spread"));
                                 continue;
                             }
-                            // Minimum absolute profit filter (avoids micro-spread items)
-                            if (askPrice - bidPrice < 50) {
-                                noSpread++;
+                            // Absolute floor: ≥100 coins spread so tax doesn't eat profit
+                            if (spread < 100) {
+                                rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                        "Spread <100 coins"));
                                 continue;
                             }
-                            // Minimum relative spread (avoid items where tax eats profit)
-                            double spreadPct = (askPrice - bidPrice) / askPrice;
-                            if (spreadPct < 0.02) { // less than 2 %
-                                noSpread++;
+                            // Relative floor: ≥1% spread
+                            if (spread / askPrice < 0.01) {
+                                rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                        "Spread% <1%"));
                                 continue;
                             }
-                            profitPerItem = askPrice - bidPrice;
-                            salesPerWeek = Math.min(buyMovingWeek, sellMovingWeek) / askPrice;
+                            profitPerItem = spread;
+                            salesPerWeek = Math.min(buyVol, sellVol) / askPrice;
                         }
 
-                        double profitPerHour = profitPerItem * salesPerWeek / ItemScore.HOURS_PER_WEEK;
+                        // Volume filter
+                        double slowVol = Math.min(buyVol, sellVol);
+                        if (slowVol < cfg.minWeeklyVolume) {
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                    "Vol too low (" + fmt(slowVol) + ")"));
+                            continue;
+                        }
+
+                        double fillRatePerHour = salesPerWeek / ItemScore.HOURS_PER_WEEK;
+                        double profitPerHour = profitPerItem * fillRatePerHour;
 
                         if (profitPerHour <= 0)
                             continue;
 
-                        if (profitPerHour < ModConfig.get().minProfitPerHour)
+                        // Sells/hr filter
+                        if (fillRatePerHour < cfg.minSellsPerHour) {
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                    "Fill rate " + (int) fillRatePerHour + "/hr < " + cfg.minSellsPerHour));
                             continue;
+                        }
 
-                        String displayName = toDisplayName(productId);
+                        // Profit/hr filter (togglable)
+                        if (cfg.minProfitPerHourEnabled && profitPerHour < cfg.minProfitPerHour) {
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                    "Profit/hr " + fmt(profitPerHour) + " < " + fmt(cfg.minProfitPerHour)));
+                            continue;
+                        }
+
                         ItemScore score = new ItemScore(
                                 productId, displayName,
                                 askPrice, bidPrice,
-                                buyMovingWeek, sellMovingWeek,
-                                buyOrders, sellOrders, purse);
+                                buyVol, sellVol,
+                                buyOrd, sellOrd,
+                                purse, npcP);
 
                         if (score.purchasableAmount < 1) {
-                            cantAfford++;
-                            continue;
-                        }
-                        if (score.manipulated) {
-                            manipulated++;
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice, "Can't afford any"));
                             continue;
                         }
 
-                        double effectiveScore = npcMode
-                                ? profitPerItem * salesPerWeek / ItemScore.HOURS_PER_WEEK
-                                : score.score;
-                        effectiveScores.put(score, effectiveScore);
+                        // Manipulation check
+                        boolean orderImbalance = buyOrd > 0 && sellOrd > 0
+                                && (double) Math.max(buyOrd, sellOrd) / Math.min(buyOrd, sellOrd) > 20.0;
+                        boolean thinVolume = fillRatePerHour < 1.0 && profitPerItem > 50_000;
+                        if (orderImbalance || thinVolume) {
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                    orderImbalance ? "Order imbalance" : "Thin volume"));
+                            continue;
+                        }
+
+                        // Total profit filter (togglable)
+                        if (cfg.minTotalProfitEnabled && score.totalProfit < cfg.minTotalProfit) {
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                    "Total profit " + fmt(score.totalProfit) + " < " + fmt(cfg.minTotalProfit)));
+                            continue;
+                        }
+
                         candidates.add(score);
 
                     } catch (Exception e) {
-                        // malformed entry — skip
+                        rejected.add(rej(productId, displayName, askPrice, bidPrice, "Parse error"));
                     }
                 }
 
-                System.out.printf(
-                        "[ItemSelector] %s | %d total | badPrice=%d noSpread=%d noNpc=%d cantAfford=%d manipulated=%d | candidates=%d%n",
-                        npcMode ? "NPC-SELL" : "FLIP",
-                        total, badPrice, noSpread, noNpc, cantAfford, manipulated, candidates.size());
+                // Default sort: profit/hr desc
+                candidates.sort(Comparator.comparingDouble(s -> -s.weeklyProfit));
 
-                if (candidates.isEmpty()) {
-                    System.err.println("[ItemSelector] No viable items found.");
-                    return null;
-                }
+                System.out.printf("[ItemSelector] %s | candidates=%d rejected=%d purse=%.0f%n",
+                        npcMode ? "NPC" : "FLIP", candidates.size(), rejected.size(), purse);
+                if (!candidates.isEmpty())
+                    System.out.println("[ItemSelector] #1: " + candidates.get(0));
 
-                candidates.sort(Comparator.comparingDouble(s -> -effectiveScores.getOrDefault(s, s.score)));
-
-                System.out.println("[ItemSelector] Top 10 for purse " + (long) purse
-                        + (npcMode ? " [NPC mode]" : " [flip mode]") + ":");
-                int rank = 1;
-                for (ItemScore s : candidates.subList(0, Math.min(10, candidates.size()))) {
-                    System.out.printf(
-                            "  #%d %s | spread=%.1f (%.2f%%) | weekly=%.0f/hr | totalProfit=%.0f | amount=%d%n",
-                            rank++, s.displayName,
-                            s.spread, s.spreadPercent * 100,
-                            s.weeklyProfit, s.totalProfit, s.purchasableAmount);
-                }
-
-                ItemScore best = candidates.get(0);
-                lastBest = best;
-                System.out.println("[ItemSelector] Selected: " + best.displayName);
-                return best;
+                ScoringResult result = new ScoringResult(candidates, rejected);
+                lastResult = result;
+                lastBest = result.best();
+                return result;
 
             } catch (Exception e) {
-                System.err.println("[ItemSelector] Scoring failed: " + e.getMessage());
+                System.err.println("[ItemSelector] Failed: " + e.getMessage());
                 return null;
             }
         });
     }
 
-    private static String toDisplayName(String productId) {
-        String[] parts = productId.split("_");
-        StringBuilder sb = new StringBuilder();
-        for (String part : parts) {
-            if (!part.isEmpty()) {
-                sb.append(Character.toUpperCase(part.charAt(0)))
-                        .append(part.substring(1).toLowerCase())
-                        .append(" ");
-            }
-        }
-        return sb.toString().trim();
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static RejectedItem rej(String id, String name, double ask, double bid, String reason) {
+        return new RejectedItem(id, name, ask, bid, reason);
+    }
+
+    private static String fmt(double v) {
+        if (v >= 1_000_000)
+            return String.format("%.1fM", v / 1_000_000);
+        if (v >= 1_000)
+            return String.format("%.0fK", v / 1_000);
+        return String.format("%.0f", v);
     }
 }
