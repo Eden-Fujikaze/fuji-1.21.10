@@ -5,112 +5,107 @@ import at.fuji.bazaar.BazaarWorker;
 import at.fuji.bazaar.ItemScore;
 import at.fuji.bazaar.ItemSelector;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 
+/**
+ * NOTE: Add the following to ItemSelector so the preview panel can read it:
+ *
+ * public static volatile ItemScore lastBest = null;
+ *
+ * Then after `ItemScore best = candidates.get(0);` add:
+ *
+ * ItemSelector.lastBest = best;
+ */
 public class BazaarPanel implements Sidebar {
 
     // ── Colours ───────────────────────────────────────────────────────────────
     private static final int COL_PANEL = 0xFF12121A;
     private static final int COL_ROW_EVEN = 0xFF15151F;
-    private static final int COL_ROW_ODD = 0xFF12121A;
-    private static final int COL_ROW_HOV = 0xFF1E1E2E;
-    private static final int COL_ROW_SEL = 0xFF1A1A3A;
+    private static final int COL_ROW_HOVER = 0xFF1E1E2E;
     private static final int COL_BORDER = 0xFF2A2A3F;
     private static final int COL_ACCENT = 0xFFFF6644;
     private static final int COL_RED = 0xFFFF4455;
     private static final int COL_GREEN = 0xFF44FF88;
     private static final int COL_YELLOW = 0xFFFFDD44;
-    private static final int COL_CYAN = 0xFF44DDFF;
+    private static final int COL_BLUE = 0xFF44AAFF;
     private static final int COL_TEXT = 0xFFE0E0F0;
     private static final int COL_TEXT_DIM = 0xFF808099;
     private static final int COL_SCROLLBAR = 0xFF3A3A5A;
     private static final int COL_SCROLL_TH = 0xFF6060A0;
     private static final int COL_SETTINGS = 0xFF0D0D16;
-    private static final int COL_COL_HEAD = 0xFF0A0A12;
-    private static final int COL_DETAIL_BG = 0xFF0F0F1A;
-    private static final int COL_DETAIL_HD = 0xFF0A0A0F;
+    private static final int COL_PREVIEW_BG = 0xFF0F0F1A;
+    private static final int COL_PREVIEW_HD = 0xFF0A0A0F;
     private static final int COL_DIVIDER = 0xFF222233;
 
-    // ── Layout ────────────────────────────────────────────────────────────────
+    // ── Main panel layout ─────────────────────────────────────────────────────
+    private static final int ROW_HEIGHT = 28;
     private static final int HEADER_H = 32;
-    private static final int SETTINGS_H = 44;
-    private static final int TAB_H = 22;
-    private static final int COL_HDR_H = 16;
-    private static final int ROW_H = 20;
-    private static final int FOOTER_H = 36;
+    /**
+     * Settings block: 3 rows × (14px button + 8px gap) + 6px top pad + 6px bottom
+     * pad
+     * Row1 y = HEADER_H + 6 (toggles)
+     * Row2 y = HEADER_H + 28 (sells/hr, vol/wk)
+     * Row3 y = HEADER_H + 50 (min profit)
+     * Block h = 50 + 14 + 6 = 70
+     */
+    private static final int SETTINGS_H = 70;
+    private static final int FOOTER_H = 40;
     private static final int PADDING = 14;
     private static final int SB_W = 4;
-    private static final int TOG_W = 68;
+
+    // ── Preview panel ─────────────────────────────────────────────────────────
+    private static final int PREV_W = 210;
+    private static final int PREV_GAP = 6; // gap between main panel right edge and preview
+    private static final int PREV_HEADER = 28;
+    private static final int PREV_PAD = 10;
+    private static final int PREV_ROW = 18; // line height inside preview
+
+    // ── Settings toggle buttons ───────────────────────────────────────────────
+    private static final int TOG_W = 72;
     private static final int TOG_H = 14;
 
-    // Detail panel
-    private static final int DET_W = 220;
-    private static final int DET_GAP = 6;
-    private static final int DET_PAD = 10;
-    private static final int DET_ROW = 15;
-    private static final int DET_HDR = 26;
-
-    // ── Settings layout constants ─────────────────────────────────────────────
-    // Row 1: [NPC SELL 68] [DEBUG 56] gap [Sells/hr lbl] [-] [value] [+] gap
-    // [Vol/wk lbl] [-] [value] [+]
+    // Row 1 x-offsets (relative to px)
     private static final int R1_NPC_X = PADDING;
-    private static final int R1_DBG_X = PADDING + 72;
-    private static final int R1_SLB_X = PADDING + 136; // "Sells/hr" label x
-    private static final int R1_SMN_X = PADDING + 190; // [-]
-    private static final int R1_SV_X = PADDING + 206; // value (gap 14px before [+])
-    private static final int R1_SPL_X = PADDING + 246; // [+]
-    private static final int R1_VLB_X = PADDING + 268; // "Vol/wk" label x
-    private static final int R1_VMN_X = PADDING + 306; // [-]
-    private static final int R1_VV_X = PADDING + 322; // value
-    private static final int R1_VPL_X = PADDING + 368; // [+]
+    private static final int R1_DBG_X = PADDING + TOG_W + 6;
+    private static final int R1_PREV_X = PADDING + (TOG_W + 6) * 2; // PREVIEW toggle
 
-    // Row 2: [● 14] [Profit/hr lbl] [-] [value] [+] gap [● 14] [Total profit lbl]
-    // [-] [value] [+]
-    private static final int R2_PEN_X = PADDING; // ● enable toggle
-    private static final int R2_PLB_X = PADDING + 18; // "Profit/hr" label
-    private static final int R2_PMN_X = PADDING + 78; // [-]
-    private static final int R2_PV_X = PADDING + 94; // value
-    private static final int R2_PPL_X = PADDING + 138; // [+]
-    private static final int R2_TEN_X = PADDING + 162; // ● enable toggle
-    private static final int R2_TLB_X = PADDING + 180; // "Total profit" label
-    private static final int R2_TMN_X = PADDING + 256; // [-]
-    private static final int R2_TV_X = PADDING + 272; // value
-    private static final int R2_TPL_X = PADDING + 316; // [+]
+    // Row 2: Sells/hr [-] [value] [+]
+    private static final int R2_SLB_X = PADDING; // label
+    private static final int R2_SMN_X = PADDING + 52; // [-]
+    private static final int R2_SV_X = PADDING + 68; // value
+    private static final int R2_SPL_X = PADDING + 100; // [+]
+    // Row 2: Vol/wk [-] [value] [+]
+    private static final int R2_VLB_X = PADDING + 120;
+    private static final int R2_VMN_X = PADDING + 162;
+    private static final int R2_VV_X = PADDING + 178;
+    private static final int R2_VPL_X = PADDING + 218;
 
-    // ── Enums ─────────────────────────────────────────────────────────────────
-    private enum Tab {
-        TOP, REJECTED, BLACKLIST
-    }
+    // Row 3: Min Profit [-] [value] [+]
+    private static final int R3_PLB_X = PADDING; // label
+    private static final int R3_PMN_X = PADDING + 62; // [-]
+    private static final int R3_PV_X = PADDING + 78; // value
+    private static final int R3_PPL_X = PADDING + 120; // [+]
 
-    private enum SortMode {
-        PROFIT_HR("Profit/hr"), TOTAL("Total"), FILL("Fill/hr"), SPREAD("Spread%");
-
-        final String label;
-
-        SortMode(String l) {
-            label = l;
-        }
-    }
+    // Step sizes
+    private static final int STEP_SELLS = 10;
+    private static final int STEP_VOL = 100_000;
+    private static final int STEP_PROFIT = 5_000;
 
     // ── State ─────────────────────────────────────────────────────────────────
     private FujiScreen parent;
     private int px, py, pw, ph;
 
-    private Tab tab = Tab.TOP;
-    private SortMode sort = SortMode.PROFIT_HR;
-    private int scroll = 0;
-    private int selectedIdx = -1;
-    private ItemScore selectedItem = null;
-    private List<ItemScore> sortedList = new ArrayList<>();
-    private boolean loading = false;
+    private int scrollOffset = 0;
     private boolean addRowVisible = false;
+    private boolean previewOpen = false;
+    private volatile boolean previewLoading = false;
     private TextFieldWidget nameBox;
     private final List<Object> managedWidgets = new ArrayList<>();
 
@@ -127,16 +122,13 @@ public class BazaarPanel implements Sidebar {
     }
 
     @Override
-    public void init(FujiScreen parent, int px, int py, int pw, int ph) {
+    public void init(FujiScreen parent, int panelX, int panelY, int panelW, int panelH) {
         this.parent = parent;
-        this.px = px;
-        this.py = py;
-        this.pw = pw;
-        this.ph = ph;
-        scroll = 0;
-        selectedIdx = -1;
-        selectedItem = null;
-        rebuildSortedList();
+        this.px = panelX;
+        this.py = panelY;
+        this.pw = panelW;
+        this.ph = panelH;
+        scrollOffset = 0;
         rebuildWidgets();
     }
 
@@ -149,136 +141,36 @@ public class BazaarPanel implements Sidebar {
         managedWidgets.clear();
     }
 
-    @Override
-    public boolean mouseScrolled(double mx, double my, double amount) {
-        if (mx < px || mx > px + pw || my < listTop() || my > listBot())
+    public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
+        int listTop = py + HEADER_H + SETTINGS_H;
+        int listBottom = py + ph - FOOTER_H;
+        if (mouseX < px || mouseX > px + pw || mouseY < listTop || mouseY > listBottom)
             return false;
-        scroll -= (int) (amount * ROW_H);
+        scrollOffset -= (int) (amount * ROW_HEIGHT);
         clampScroll();
         rebuildWidgets();
         return true;
     }
 
-    @Override
-    public boolean onMouseClicked(double mx, double my) {
-        if (tab == Tab.TOP) {
-            int colHdrY = listTop();
-            // Column header sort clicks
-            if (my >= colHdrY && my < colHdrY + COL_HDR_H) {
-                if (mx >= profitCol() && mx < totalCol()) {
-                    setSortMode(SortMode.PROFIT_HR);
-                    return true;
-                } else if (mx >= totalCol() && mx < fillCol()) {
-                    setSortMode(SortMode.TOTAL);
-                    return true;
-                } else if (mx >= fillCol() && mx < spreadCol()) {
-                    setSortMode(SortMode.FILL);
-                    return true;
-                } else if (mx >= spreadCol() && mx < btnCol()) {
-                    setSortMode(SortMode.SPREAD);
-                    return true;
-                }
-            }
-            // Row selection
-            int rowsTop = colHdrY + COL_HDR_H;
-            if (mx >= px && mx < px + pw - SB_W && my >= rowsTop && my < listBot()) {
-                int idx = (int) ((my - rowsTop + scroll) / ROW_H);
-                if (idx >= 0 && idx < sortedList.size()) {
-                    selectedIdx = idx;
-                    selectedItem = sortedList.get(idx);
-                    rebuildWidgets();
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
+    // ── Scroll helpers ────────────────────────────────────────────────────────
 
-    // ── Column x positions (right-anchored) ───────────────────────────────────
-    // [NAME...][profit/hr 72][total 68][fill 58][spread 56][btn 20][SB_W][PADDING]
-    private int btnCol() {
-        return px + pw - PADDING - SB_W - 20;
-    }
-
-    private int spreadCol() {
-        return btnCol() - 56;
-    }
-
-    private int fillCol() {
-        return spreadCol() - 58;
-    }
-
-    private int totalCol() {
-        return fillCol() - 68;
-    }
-
-    private int profitCol() {
-        return totalCol() - 72;
-    }
-
-    private int nameCol() {
-        return px + PADDING + 22;
-    }
-
-    // ── Layout helpers ────────────────────────────────────────────────────────
-    private int listTop() {
-        return py + HEADER_H + SETTINGS_H + TAB_H;
-    }
-
-    private int listBot() {
-        return (tab == Tab.BLACKLIST) ? py + ph - FOOTER_H : py + ph;
-    }
-
-    private int listCount() {
-        return switch (tab) {
-            case TOP -> sortedList.size();
-            case REJECTED -> {
-                var r = ItemSelector.lastResult;
-                yield r != null ? r.rejected.size() : 0;
-            }
-            case BLACKLIST -> ModConfig.get().bazaarBlacklist.size();
-        };
+    private int listViewportH() {
+        return ph - HEADER_H - SETTINGS_H - FOOTER_H;
     }
 
     private int maxScroll() {
-        int h = listBot() - listTop() - COL_HDR_H;
-        return Math.max(0, listCount() * ROW_H - h);
+        return Math.max(0, ModConfig.get().bazaarBlacklist.size() * ROW_HEIGHT - listViewportH());
     }
 
     private void clampScroll() {
-        scroll = Math.max(0, Math.min(scroll, maxScroll()));
-    }
-
-    private void setSortMode(SortMode m) {
-        sort = m;
-        scroll = 0;
-        selectedIdx = -1;
-        selectedItem = null;
-        rebuildSortedList();
-        rebuildWidgets();
-    }
-
-    private void rebuildSortedList() {
-        ItemSelector.ScoringResult result = ItemSelector.lastResult;
-        if (result == null) {
-            sortedList = new ArrayList<>();
-            return;
-        }
-        sortedList = new ArrayList<>(result.candidates);
-        Comparator<ItemScore> cmp = switch (sort) {
-            case PROFIT_HR -> Comparator.comparingDouble(s -> -s.weeklyProfit);
-            case TOTAL -> Comparator.comparingDouble(s -> -s.totalProfit);
-            case FILL -> Comparator.comparingDouble(s -> -s.fillRatePerHour);
-            case SPREAD -> Comparator.comparingDouble(s -> -s.spreadPercent);
-        };
-        sortedList.sort(cmp);
+        scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll()));
     }
 
     // ── Widget helpers ────────────────────────────────────────────────────────
 
-    private void addBtn(ButtonWidget b) {
-        managedWidgets.add(b);
-        parent.addWidget(b);
+    private void addBtn(ButtonWidget btn) {
+        managedWidgets.add(btn);
+        parent.addWidget(btn);
     }
 
     private void addBox(TextFieldWidget b) {
@@ -286,574 +178,394 @@ public class BazaarPanel implements Sidebar {
         parent.addWidget(b);
     }
 
-    private ButtonWidget btn(String l, int x, int y, int w, int h, ButtonWidget.PressAction a) {
-        return ButtonWidget.builder(Text.literal(l), a).dimensions(x, y, w, h).build();
-    }
-
-    private ButtonWidget tog(String l, boolean on, int x, int y, int w, ButtonWidget.PressAction a) {
-        return ButtonWidget.builder(Text.literal(l + (on ? " \u25CF" : " \u25CB")), a)
-                .dimensions(x, y, w, TOG_H).build();
-    }
-
-    private ButtonWidget sm(String l, int x, int y, Runnable r) {
-        return ButtonWidget.builder(Text.literal(l), b -> r.run()).dimensions(x, y, 14, 14).build();
-    }
-
-    private ButtonWidget enTog(boolean on, int x, int y, ButtonWidget.PressAction a) {
-        return ButtonWidget.builder(Text.literal(on ? "\u25CF" : "\u25CB"), a)
-                .dimensions(x, y, 14, 14).build();
-    }
-
-    // ── Rebuild ───────────────────────────────────────────────────────────────
-
     private void rebuildWidgets() {
         clearWidgets();
         clampScroll();
+
         ModConfig cfg = ModConfig.get();
-        int sY = py + HEADER_H;
+        List<String> blist = cfg.bazaarBlacklist;
+        int listTop = py + HEADER_H + SETTINGS_H;
+        int listBottom = py + ph - FOOTER_H;
+        int settTop = py + HEADER_H;
 
-        // ── Header: REFRESH button ────────────────────────────────────────
-        addBtn(btn(loading ? "..." : "\u21BB REFRESH",
-                px + pw - PADDING - 84, py + (HEADER_H - 14) / 2, 84, 14, b -> {
-                    if (loading)
-                        return;
-                    loading = true;
-                    selectedIdx = -1;
-                    selectedItem = null;
-                    rebuildWidgets();
-                    ItemSelector.scoreAllItems(BazaarWorker.lastKnownPurse).thenAccept(result -> {
-                        loading = false;
-                        MinecraftClient.getInstance().execute(() -> {
-                            rebuildSortedList();
-                            rebuildWidgets();
-                        });
-                    });
-                }));
+        // ── Row 1: mode toggles ───────────────────────────────────────────────
+        int r1Y = settTop + 6;
 
-        // ── Settings Row 1 ────────────────────────────────────────────────
-        int r1Y = sY + 6;
-        addBtn(tog("NPC SELL", cfg.npcSellMode, px + R1_NPC_X, r1Y, TOG_W, b -> {
+        addBtn(toggle("NPC SELL", cfg.npcSellMode, px + R1_NPC_X, r1Y, btn -> {
             cfg.npcSellMode = !cfg.npcSellMode;
             ModConfig.save();
             rebuildWidgets();
         }));
-        addBtn(tog("DEBUG", cfg.debugMode, px + R1_DBG_X, r1Y, 56, b -> {
-            cfg.debugMode = !cfg.debugMode;
-            ModConfig.save();
-            rebuildWidgets();
-        }));
 
-        // Sells/hr [-] [+]
-        addBtn(sm("-", px + R1_SMN_X, r1Y, () -> {
-            cfg.minSellsPerHour = Math.max(0, cfg.minSellsPerHour - 10);
+        addBtn(toggle("DEBUG", cfg.debugMode, px + R1_DBG_X, r1Y, btn -> {
+            boolean turningOn = !cfg.debugMode;
+            cfg.debugMode = turningOn;
             ModConfig.save();
-            rebuildWidgets();
-        }));
-        addBtn(sm("+", px + R1_SPL_X, r1Y, () -> {
-            cfg.minSellsPerHour += 10;
-            ModConfig.save();
-            rebuildWidgets();
-        }));
-
-        // Vol/wk [-] [+]
-        addBtn(sm("-", px + R1_VMN_X, r1Y, () -> {
-            cfg.minWeeklyVolume = Math.max(0, cfg.minWeeklyVolume - 100_000);
-            ModConfig.save();
-            rebuildWidgets();
-        }));
-        addBtn(sm("+", px + R1_VPL_X, r1Y, () -> {
-            cfg.minWeeklyVolume += 100_000;
-            ModConfig.save();
-            rebuildWidgets();
-        }));
-
-        // ── Settings Row 2 ────────────────────────────────────────────────
-        int r2Y = sY + 26;
-
-        // Profit/hr
-        addBtn(enTog(cfg.minProfitPerHourEnabled, px + R2_PEN_X, r2Y, b -> {
-            cfg.minProfitPerHourEnabled = !cfg.minProfitPerHourEnabled;
-            ModConfig.save();
-            rebuildWidgets();
-        }));
-        addBtn(sm("-", px + R2_PMN_X, r2Y, () -> {
-            cfg.minProfitPerHour = Math.max(0, cfg.minProfitPerHour - 5_000);
-            ModConfig.save();
-            rebuildWidgets();
-        }));
-        addBtn(sm("+", px + R2_PPL_X, r2Y, () -> {
-            cfg.minProfitPerHour += 5_000;
-            ModConfig.save();
-            rebuildWidgets();
-        }));
-
-        // Total profit
-        addBtn(enTog(cfg.minTotalProfitEnabled, px + R2_TEN_X, r2Y, b -> {
-            cfg.minTotalProfitEnabled = !cfg.minTotalProfitEnabled;
-            ModConfig.save();
-            rebuildWidgets();
-        }));
-        addBtn(sm("-", px + R2_TMN_X, r2Y, () -> {
-            cfg.minTotalProfit = Math.max(0, cfg.minTotalProfit - 10_000);
-            ModConfig.save();
-            rebuildWidgets();
-        }));
-        addBtn(sm("+", px + R2_TPL_X, r2Y, () -> {
-            cfg.minTotalProfit += 10_000;
-            ModConfig.save();
-            rebuildWidgets();
-        }));
-
-        // ── Tab buttons ───────────────────────────────────────────────────
-        int tabY = py + HEADER_H + SETTINGS_H + 4;
-        addBtn(btn("TOP ITEMS", px + PADDING, tabY, 80, 14, b -> switchTab(Tab.TOP)));
-        addBtn(btn("REJECTED", px + PADDING + 82, tabY, 80, 14, b -> switchTab(Tab.REJECTED)));
-        addBtn(btn("BLACKLIST", px + PADDING + 82 * 2, tabY, 80, 14, b -> switchTab(Tab.BLACKLIST)));
-
-        // ── Content: row-level buttons ────────────────────────────────────
-        int rowsTop = listTop() + COL_HDR_H;
-        int listBot = listBot();
-
-        if (tab == Tab.TOP) {
-            for (int i = 0; i < sortedList.size(); i++) {
-                final ItemScore item = sortedList.get(i);
-                int rowY = rowsTop + i * ROW_H - scroll;
-                if (rowY + ROW_H <= rowsTop || rowY >= listBot)
-                    continue;
-                addBtn(btn("\u25BA", btnCol() + 1, rowY + (ROW_H - 12) / 2, 18, 12, b -> {
-                    if (BazaarWorker.isEnabled())
-                        BazaarWorker.stop();
-                    BazaarWorker.startWithItem(item);
-                    rebuildWidgets();
-                }));
+            // Restart the bot immediately so the new cap takes effect
+            if (turningOn && BazaarWorker.isEnabled()) {
+                BazaarWorker.stop();
+                new BazaarWorker().start();
             }
+            rebuildWidgets();
+        }));
 
-        } else if (tab == Tab.BLACKLIST) {
-            List<String> bl = cfg.bazaarBlacklist;
-            for (int i = 0; i < bl.size(); i++) {
-                final int idx = i;
-                int rowY = rowsTop + i * ROW_H - scroll;
-                if (rowY + ROW_H <= rowsTop || rowY >= listBot)
-                    continue;
-                addBtn(btn("REMOVE", px + pw - PADDING - SB_W - 46,
-                        rowY + (ROW_H - 12) / 2, 44, 12, b -> {
-                            cfg.bazaarBlacklist.remove(idx);
-                            ModConfig.save();
-                            rebuildWidgets();
-                        }));
-            }
-            // Footer
-            int footerY = py + ph - FOOTER_H;
-            if (addRowVisible) {
-                nameBox = new TextFieldWidget(MinecraftClient.getInstance().textRenderer,
-                        px + PADDING, footerY + 10, 200, 16, Text.empty());
-                nameBox.setPlaceholder(Text.literal("Product ID e.g. ENCHANTED_SUGAR"));
-                nameBox.setMaxLength(64);
-                addBox(nameBox);
-                addBtn(btn("ADD", px + PADDING + 208, footerY + 11, 36, 14, b -> {
-                    String id = nameBox.getText().trim().toUpperCase().replace(" ", "_");
-                    if (!id.isEmpty() && !cfg.bazaarBlacklist.contains(id)) {
-                        cfg.bazaarBlacklist.add(id);
-                        ModConfig.save();
-                    }
-                    addRowVisible = false;
-                    rebuildWidgets();
-                }));
-                addBtn(btn("CANCEL", px + PADDING + 250, footerY + 11, 48, 14, b -> {
-                    addRowVisible = false;
-                    rebuildWidgets();
-                }));
-            } else {
-                addBtn(btn("+ BLACKLIST ITEM", px + PADDING, footerY + 11, 110, 14, b -> {
-                    addRowVisible = true;
-                    rebuildWidgets();
-                }));
-            }
-        }
+        addBtn(toggle("PREVIEW", previewOpen, px + R1_PREV_X, r1Y, btn -> {
+            previewOpen = !previewOpen;
+            rebuildWidgets();
+        }));
 
-        // ── Detail panel widgets ──────────────────────────────────────────
-        if (selectedItem != null) {
-            int pvX = px + pw + DET_GAP;
-            addBtn(btn("\u00D7", pvX + DET_W - DET_PAD - 14, py + 6, 14, 14, b -> {
-                selectedIdx = -1;
-                selectedItem = null;
+        // ── Row 2: Sells/hr and Vol/wk ───────────────────────────────────────
+        int r2Y = settTop + 28;
+
+        addBtn(smallBtn("-", px + R2_SMN_X, r2Y, () -> {
+            cfg.minSellsPerHour = Math.max(0, cfg.minSellsPerHour - STEP_SELLS);
+            ModConfig.save();
+            rebuildWidgets();
+        }));
+        addBtn(smallBtn("+", px + R2_SPL_X, r2Y, () -> {
+            cfg.minSellsPerHour += STEP_SELLS;
+            ModConfig.save();
+            rebuildWidgets();
+        }));
+
+        addBtn(smallBtn("-", px + R2_VMN_X, r2Y, () -> {
+            cfg.minWeeklyVolume = Math.max(0, cfg.minWeeklyVolume - STEP_VOL);
+            ModConfig.save();
+            rebuildWidgets();
+        }));
+        addBtn(smallBtn("+", px + R2_VPL_X, r2Y, () -> {
+            cfg.minWeeklyVolume += STEP_VOL;
+            ModConfig.save();
+            rebuildWidgets();
+        }));
+
+        // ── Row 3: Min total profit ───────────────────────────────────────────
+        int r3Y = settTop + 50;
+
+        addBtn(smallBtn("-", px + R3_PMN_X, r3Y, () -> {
+            cfg.minProfitPerHour = Math.max(0, cfg.minProfitPerHour - STEP_PROFIT);
+            ModConfig.save();
+            rebuildWidgets();
+        }));
+        addBtn(smallBtn("+", px + R3_PPL_X, r3Y, () -> {
+            cfg.minProfitPerHour += STEP_PROFIT;
+            ModConfig.save();
+            rebuildWidgets();
+        }));
+
+        // ── Preview close + refresh buttons (only when open) ─────────────────
+        if (previewOpen) {
+            int pvX = px + pw + PREV_GAP;
+
+            // [×] close
+            addBtn(smallBtn("\u00D7", pvX + PREV_W - PREV_PAD - 14, py + 7, btn -> {
+                previewOpen = false;
                 rebuildWidgets();
             }));
-            String botLbl = BazaarWorker.isEnabled() ? "\u25A0 STOP BOT" : "\u25BA START BOT";
-            addBtn(btn(botLbl, pvX + DET_PAD, py + ph - 28,
-                    DET_W - DET_PAD * 2, 16, b -> {
-                        if (BazaarWorker.isEnabled())
-                            BazaarWorker.stop();
-                        else
-                            BazaarWorker.startWithItem(selectedItem);
-                        rebuildWidgets();
+
+            // [↻] refresh — re-runs scoring against current purse, no bot needed
+            addBtn(styledButton(previewLoading ? "..." : "\u21BB REFRESH",
+                    pvX + PREV_PAD, py + 7, 60, 14, btn -> {
+                        if (previewLoading)
+                            return;
+                        previewLoading = true;
+                        rebuildWidgets(); // immediately show "..."
+                        double purse = BazaarWorker.lastKnownPurse;
+                        ItemSelector.selectBestItem(purse).thenAccept(result -> {
+                            ItemSelector.lastBest = result;
+                            previewLoading = false;
+                            MinecraftClient.getInstance().execute(this::rebuildWidgets);
+                        });
                     }));
         }
-    }
 
-    private void switchTab(Tab t) {
-        tab = t;
-        scroll = 0;
-        if (t != Tab.TOP) {
-            selectedIdx = -1;
-            selectedItem = null;
+        // ── Blacklist remove buttons ──────────────────────────────────────────
+        for (int i = 0; i < blist.size(); i++) {
+            final int idx = i;
+            int rowY = listTop + i * ROW_HEIGHT - scrollOffset;
+            if (rowY + ROW_HEIGHT <= listTop || rowY >= listBottom)
+                continue;
+            int btnY = rowY + (ROW_HEIGHT - 14) / 2;
+            addBtn(styledButton("REMOVE", px + pw - PADDING - SB_W - 44, btnY, 44, 14, btn -> {
+                ModConfig.get().bazaarBlacklist.remove(idx);
+                ModConfig.save();
+                rebuildWidgets();
+            }));
         }
-        rebuildWidgets();
+
+        // ── Footer ─────────────────────────────────────────────────────────────
+        int footerY = py + ph - FOOTER_H;
+        if (addRowVisible) {
+            nameBox = new TextFieldWidget(MinecraftClient.getInstance().textRenderer,
+                    px + PADDING, footerY + 12, 200, 16, Text.empty());
+            nameBox.setPlaceholder(Text.literal("Product ID e.g. ENCHANTED_SUGAR"));
+            nameBox.setMaxLength(64);
+            addBox(nameBox);
+            addBtn(styledButton("ADD", px + PADDING + 208, footerY + 13, 36, 14, btn -> {
+                String id = nameBox.getText().trim().toUpperCase().replace(" ", "_");
+                if (!id.isEmpty() && !cfg.bazaarBlacklist.contains(id)) {
+                    cfg.bazaarBlacklist.add(id);
+                    ModConfig.save();
+                }
+                addRowVisible = false;
+                rebuildWidgets();
+            }));
+            addBtn(styledButton("CANCEL", px + PADDING + 250, footerY + 13, 48, 14, btn -> {
+                addRowVisible = false;
+                rebuildWidgets();
+            }));
+        } else {
+            addBtn(styledButton("+ BLACKLIST ITEM", px + PADDING, footerY + 13, 110, 14, btn -> {
+                addRowVisible = true;
+                rebuildWidgets();
+            }));
+        }
     }
 
     // ── Render ────────────────────────────────────────────────────────────────
 
     @Override
     public void render(DrawContext gfx, int mouseX, int mouseY, float delta) {
+        ModConfig cfg = ModConfig.get();
+        List<String> bl = cfg.bazaarBlacklist;
+        int listTop = py + HEADER_H + SETTINGS_H;
+        int listBottom = py + ph - FOOTER_H;
+        int vpH = listViewportH();
+        int contentH = bl.size() * ROW_HEIGHT;
         var tr = MinecraftClient.getInstance().textRenderer;
-        var cfg = ModConfig.get();
 
-        renderHeader(gfx, tr);
-        renderSettings(gfx, tr, cfg);
-        renderTabBar(gfx, tr);
-
-        switch (tab) {
-            case TOP -> renderTopItems(gfx, tr, mouseX, mouseY);
-            case REJECTED -> renderRejected(gfx, tr, mouseX, mouseY);
-            case BLACKLIST -> renderBlacklist(gfx, tr, mouseX, mouseY, cfg);
-        }
-
-        renderScrollbar(gfx);
-
-        if (tab == Tab.BLACKLIST)
-            gfx.fill(px, py + ph - FOOTER_H, px + pw, py + ph - FOOTER_H + 1, COL_BORDER);
-
-        if (selectedItem != null)
-            renderDetail(gfx, tr);
-    }
-
-    private void renderHeader(DrawContext gfx, TextRenderer tr) {
+        // ── Header ────────────────────────────────────────────────────────────
         gfx.fill(px, py, px + pw, py + HEADER_H, 0xFF0A0A0F);
         gfx.fill(px, py + HEADER_H - 1, px + pw, py + HEADER_H, COL_BORDER);
-        gfx.drawText(tr, "BAZAAR", px + PADDING, py + (HEADER_H - 8) / 2, COL_ACCENT, false);
-        boolean on = BazaarWorker.isEnabled();
-        gfx.drawText(tr, on ? "BOT ON  " + BazaarWorker.currentItemDisplay() : "BOT OFF",
-                px + PADDING + 56, py + (HEADER_H - 8) / 2,
-                on ? COL_GREEN : COL_RED, false);
-    }
+        gfx.drawText(tr, "BAZAAR BLACKLIST",
+                px + PADDING, py + (HEADER_H - 8) / 2, COL_ACCENT, false);
+        gfx.drawText(tr, bl.size() + " ITEMS",
+                px + PADDING + 110, py + (HEADER_H - 8) / 2, COL_TEXT_DIM, false);
 
-    private void renderSettings(DrawContext gfx, TextRenderer tr, ModConfig cfg) {
-        int sY = py + HEADER_H;
-        gfx.fill(px, sY, px + pw, sY + SETTINGS_H, COL_SETTINGS);
-        gfx.fill(px, sY + SETTINGS_H - 1, px + pw, sY + SETTINGS_H, COL_BORDER);
+        // ── Settings block ────────────────────────────────────────────────────
+        int settTop = py + HEADER_H;
+        gfx.fill(px, settTop, px + pw, settTop + SETTINGS_H, COL_SETTINGS);
+        gfx.fill(px, settTop + SETTINGS_H - 1, px + pw, settTop + SETTINGS_H, COL_BORDER);
 
-        // Row 1 — text labels only (buttons placed in rebuildWidgets)
-        int r1Y = sY + 9;
-        gfx.drawText(tr, "Sells/hr", px + R1_SLB_X, r1Y, COL_TEXT_DIM, false);
-        // value sits between [-] (ends at R1_SMN_X+14) and [+] (starts at R1_SPL_X)
-        int svStart = px + R1_SMN_X + 14 + 2;
-        int svEnd = px + R1_SPL_X - 2;
-        String svStr = cfg.minSellsPerHour + "/hr";
-        int svW = tr.getWidth(svStr);
-        gfx.drawText(tr, svStr, svStart + (svEnd - svStart - svW) / 2, r1Y, COL_TEXT, false);
+        // Row 1 inline text
+        int r1Y = settTop + 6;
+        if (cfg.debugMode)
+            gfx.drawText(tr, "\u26A0 1 item only",
+                    px + R1_PREV_X + TOG_W + 8, r1Y + 3, COL_YELLOW, false);
 
-        gfx.drawText(tr, "Vol/wk", px + R1_VLB_X, r1Y, COL_TEXT_DIM, false);
-        int vvStart = px + R1_VMN_X + 14 + 2;
-        int vvEnd = px + R1_VPL_X - 2;
-        String vvStr = fmtD(cfg.minWeeklyVolume);
-        int vvW = tr.getWidth(vvStr);
-        gfx.drawText(tr, vvStr, vvStart + (vvEnd - vvStart - vvW) / 2, r1Y, COL_TEXT, false);
+        // Row 2 labels + values
+        int r2Y = settTop + 28;
+        gfx.drawText(tr, "Sells/hr", px + R2_SLB_X, r2Y + 3, COL_TEXT_DIM, false);
+        gfx.drawText(tr, cfg.minSellsPerHour + "/hr",
+                px + R2_SV_X + 2, r2Y + 3, COL_TEXT, false);
+        gfx.drawText(tr, "Vol/wk", px + R2_VLB_X, r2Y + 3, COL_TEXT_DIM, false);
+        gfx.drawText(tr, fmtCoins(cfg.minWeeklyVolume),
+                px + R2_VV_X + 2, r2Y + 3, COL_TEXT, false);
 
-        // Row 2
-        int r2Y = sY + 29;
-        int phCol = cfg.minProfitPerHourEnabled ? COL_TEXT_DIM : 0xFF404050;
-        int tpCol = cfg.minTotalProfitEnabled ? COL_TEXT_DIM : 0xFF404050;
+        // Row 3 labels + values
+        int r3Y = settTop + 50;
+        gfx.drawText(tr, "Min profit", px + R3_PLB_X, r3Y + 3, COL_TEXT_DIM, false);
+        gfx.drawText(tr, fmtCoins(cfg.minProfitPerHour),
+                px + R3_PV_X + 2, r3Y + 3, COL_TEXT, false);
 
-        gfx.drawText(tr, "Profit/hr", px + R2_PLB_X, r2Y, phCol, false);
-        int pvStart = px + R2_PMN_X + 14 + 2;
-        int pvEnd = px + R2_PPL_X - 2;
-        String pvStr = fmtD(cfg.minProfitPerHour);
-        int pvW = tr.getWidth(pvStr);
-        gfx.drawText(tr, pvStr, pvStart + (pvEnd - pvStart - pvW) / 2, r2Y,
-                cfg.minProfitPerHourEnabled ? COL_GREEN : 0xFF404050, false);
-
-        gfx.drawText(tr, "Total profit", px + R2_TLB_X, r2Y, tpCol, false);
-        int tvStart = px + R2_TMN_X + 14 + 2;
-        int tvEnd = px + R2_TPL_X - 2;
-        String tvStr = fmtD(cfg.minTotalProfit);
-        int tvW = tr.getWidth(tvStr);
-        gfx.drawText(tr, tvStr, tvStart + (tvEnd - tvStart - tvW) / 2, r2Y,
-                cfg.minTotalProfitEnabled ? COL_CYAN : 0xFF404050, false);
-    }
-
-    private void renderTabBar(DrawContext gfx, TextRenderer tr) {
-        int tbY = py + HEADER_H + SETTINGS_H;
-        gfx.fill(px, tbY, px + pw, tbY + TAB_H, 0xFF0A0A12);
-        gfx.fill(px, tbY + TAB_H - 1, px + pw, tbY + TAB_H, COL_BORDER);
-        int activeX = px + PADDING + tab.ordinal() * 82;
-        gfx.fill(activeX, tbY + TAB_H - 2, activeX + 80, tbY + TAB_H, COL_ACCENT);
-
-        var r = ItemSelector.lastResult;
-        int topCount = sortedList.size();
-        int rejCount = r != null ? r.rejected.size() : 0;
-        gfx.drawText(tr, "(" + topCount + ")",
-                px + PADDING + 56, tbY + (TAB_H - 8) / 2, COL_TEXT_DIM, false);
-        gfx.drawText(tr, "(" + rejCount + ")",
-                px + PADDING + 82 + 54, tbY + (TAB_H - 8) / 2, COL_TEXT_DIM, false);
-    }
-
-    private void renderTopItems(DrawContext gfx, TextRenderer tr, int mouseX, int mouseY) {
-        int listTop = listTop();
-        int rowsTop = listTop + COL_HDR_H;
-        int listBot = listBot();
-
-        // Column headers
-        gfx.fill(px, listTop, px + pw, listTop + COL_HDR_H, COL_COL_HEAD);
-        gfx.drawText(tr, "#", px + PADDING, listTop + 4, COL_TEXT_DIM, false);
-        gfx.drawText(tr, "NAME", nameCol(), listTop + 4, COL_TEXT_DIM, false);
-        sortHdr(gfx, tr, "Profit/hr", profitCol(), listTop, sort == SortMode.PROFIT_HR);
-        sortHdr(gfx, tr, "Total", totalCol(), listTop, sort == SortMode.TOTAL);
-        sortHdr(gfx, tr, "Fill/hr", fillCol(), listTop, sort == SortMode.FILL);
-        sortHdr(gfx, tr, "Spread%", spreadCol(), listTop, sort == SortMode.SPREAD);
-        gfx.fill(px, listTop + COL_HDR_H - 1, px + pw, listTop + COL_HDR_H, COL_BORDER);
-
-        if (loading) {
-            gfx.drawText(tr, "Scoring items\u2026", px + PADDING, rowsTop + 10, COL_TEXT_DIM, false);
-            return;
-        }
-        if (sortedList.isEmpty()) {
-            gfx.drawText(tr,
-                    ItemSelector.lastResult == null
-                            ? "Press  \u21BB REFRESH  to score items"
-                            : "No items pass current filters",
-                    px + PADDING, rowsTop + 10, COL_TEXT_DIM, false);
-            return;
-        }
-
-        gfx.enableScissor(px, rowsTop, px + pw - SB_W, listBot);
-        for (int i = 0; i < sortedList.size(); i++) {
-            ItemScore s = sortedList.get(i);
-            int rowY = rowsTop + i * ROW_H - scroll;
-            if (rowY + ROW_H <= rowsTop || rowY >= listBot)
-                continue;
-
-            boolean hov = mouseX >= px && mouseX < px + pw - SB_W
-                    && mouseY >= rowY && mouseY < rowY + ROW_H;
-            boolean sel = i == selectedIdx;
-            gfx.fill(px, rowY, px + pw - SB_W, rowY + ROW_H,
-                    sel ? COL_ROW_SEL : hov ? COL_ROW_HOV : (i % 2 == 0 ? COL_ROW_EVEN : COL_ROW_ODD));
-
-            boolean isActive = BazaarWorker.isEnabled()
-                    && s.displayName.equals(BazaarWorker.currentItemDisplay());
-            gfx.fill(px, rowY, px + 2, rowY + ROW_H, isActive ? COL_GREEN : COL_BORDER);
-
-            int ty = rowY + (ROW_H - 8) / 2;
-            gfx.drawText(tr, String.valueOf(i + 1), px + PADDING, ty, COL_TEXT_DIM, false);
-
-            int nameMaxW = profitCol() - nameCol() - 4;
-            gfx.drawText(tr, trunc(tr, s.displayName, nameMaxW), nameCol(), ty, COL_TEXT, false);
-            gfx.drawText(tr, fmtD(s.weeklyProfit), profitCol(), ty, COL_GREEN, false);
-            gfx.drawText(tr, fmtD(s.totalProfit), totalCol(), ty, COL_CYAN, false);
-            gfx.drawText(tr, String.format("%.0f", s.fillRatePerHour), fillCol(), ty, COL_TEXT, false);
-            gfx.drawText(tr, String.format("%.1f%%", s.spreadPercent * 100), spreadCol(), ty, COL_YELLOW, false);
-
-            gfx.fill(px, rowY + ROW_H - 1, px + pw - SB_W, rowY + ROW_H, COL_BORDER);
-        }
-        gfx.disableScissor();
-    }
-
-    private void renderRejected(DrawContext gfx, TextRenderer tr, int mouseX, int mouseY) {
-        int listTop = listTop();
-        int rowsTop = listTop + COL_HDR_H;
-        int listBot = listBot();
-
-        gfx.fill(px, listTop, px + pw, listTop + COL_HDR_H, COL_COL_HEAD);
-        gfx.drawText(tr, "NAME", px + PADDING, listTop + 4, COL_TEXT_DIM, false);
-        gfx.drawText(tr, "ASK", px + PADDING + 196, listTop + 4, COL_TEXT_DIM, false);
-        gfx.drawText(tr, "REASON", px + PADDING + 248, listTop + 4, COL_TEXT_DIM, false);
-        gfx.fill(px, listTop + COL_HDR_H - 1, px + pw, listTop + COL_HDR_H, COL_BORDER);
-
-        var result = ItemSelector.lastResult;
-        if (result == null) {
-            gfx.drawText(tr, "Press  \u21BB REFRESH  to score items",
-                    px + PADDING, rowsTop + 10, COL_TEXT_DIM, false);
-            return;
-        }
-
-        gfx.enableScissor(px, rowsTop, px + pw - SB_W, listBot);
-        var rejected = result.rejected;
-        for (int i = 0; i < rejected.size(); i++) {
-            var r = rejected.get(i);
-            int rowY = rowsTop + i * ROW_H - scroll;
-            if (rowY + ROW_H <= rowsTop || rowY >= listBot)
-                continue;
-
-            boolean hov = mouseX >= px && mouseX < px + pw - SB_W
-                    && mouseY >= rowY && mouseY < rowY + ROW_H;
-            gfx.fill(px, rowY, px + pw - SB_W, rowY + ROW_H,
-                    hov ? COL_ROW_HOV : (i % 2 == 0 ? COL_ROW_EVEN : COL_ROW_ODD));
-            gfx.fill(px, rowY, px + 2, rowY + ROW_H, COL_RED);
-
-            int ty = rowY + (ROW_H - 8) / 2;
-            gfx.drawText(tr, trunc(tr, r.displayName, 186), px + PADDING, ty, COL_TEXT_DIM, false);
-            gfx.drawText(tr, r.askPrice > 0 ? fmtD(r.askPrice) : "N/A", px + PADDING + 196, ty, COL_TEXT_DIM, false);
-            gfx.drawText(tr, r.reason, px + PADDING + 248, ty, COL_RED, false);
-
-            gfx.fill(px, rowY + ROW_H - 1, px + pw - SB_W, rowY + ROW_H, COL_BORDER);
-        }
-        gfx.disableScissor();
-    }
-
-    private void renderBlacklist(DrawContext gfx, TextRenderer tr,
-            int mouseX, int mouseY, ModConfig cfg) {
-        int listTop = listTop();
-        int rowsTop = listTop + COL_HDR_H;
-        int listBot = listBot();
-        var bl = cfg.bazaarBlacklist;
-
-        gfx.fill(px, listTop, px + pw, listTop + COL_HDR_H, COL_COL_HEAD);
-        gfx.drawText(tr, "PRODUCT ID  (" + bl.size() + ")",
-                px + PADDING, listTop + 4, COL_TEXT_DIM, false);
-        gfx.fill(px, listTop + COL_HDR_H - 1, px + pw, listTop + COL_HDR_H, COL_BORDER);
-
-        gfx.enableScissor(px, rowsTop, px + pw - SB_W, listBot);
+        // ── Scrollable blacklist (scissored) ──────────────────────────────────
+        gfx.enableScissor(px, listTop, px + pw - SB_W, listBottom);
+        gfx.drawText(tr, "PRODUCT ID",
+                px + PADDING, listTop + 2 - scrollOffset, COL_TEXT_DIM, false);
         for (int i = 0; i < bl.size(); i++) {
-            int rowY = rowsTop + i * ROW_H - scroll;
-            if (rowY + ROW_H <= rowsTop || rowY >= listBot)
+            int rowY = listTop + i * ROW_HEIGHT - scrollOffset;
+            if (rowY + ROW_HEIGHT <= listTop || rowY >= listBottom)
                 continue;
-            boolean hov = mouseX >= px && mouseX < px + pw - SB_W
-                    && mouseY >= rowY && mouseY < rowY + ROW_H;
-            gfx.fill(px, rowY, px + pw - SB_W, rowY + ROW_H,
-                    hov ? COL_ROW_HOV : (i % 2 == 0 ? COL_ROW_EVEN : COL_ROW_ODD));
-            gfx.fill(px, rowY, px + 2, rowY + ROW_H, COL_RED);
-            gfx.drawText(tr, bl.get(i), px + PADDING, rowY + (ROW_H - 8) / 2, COL_TEXT, false);
-            gfx.fill(px, rowY + ROW_H - 1, px + pw - SB_W, rowY + ROW_H, COL_BORDER);
+            boolean hovered = mouseX >= px && mouseX < px + pw - SB_W
+                    && mouseY >= rowY && mouseY < rowY + ROW_HEIGHT;
+            gfx.fill(px, rowY, px + pw - SB_W, rowY + ROW_HEIGHT,
+                    hovered ? COL_ROW_HOVER : (i % 2 == 0 ? COL_ROW_EVEN : COL_PANEL));
+            gfx.fill(px, rowY, px + 2, rowY + ROW_HEIGHT, COL_RED);
+            gfx.drawText(tr, bl.get(i),
+                    px + PADDING, rowY + (ROW_HEIGHT - 8) / 2, COL_TEXT, false);
+            gfx.fill(px, rowY + ROW_HEIGHT - 1, px + pw - SB_W, rowY + ROW_HEIGHT, COL_BORDER);
         }
         gfx.disableScissor();
-    }
 
-    private void renderScrollbar(DrawContext gfx) {
+        // ── Scrollbar ─────────────────────────────────────────────────────────
         int sbX = px + pw - SB_W;
-        int listTop = listTop() + COL_HDR_H;
-        int listBot = listBot();
-        int vpH = listBot - listTop;
-        int contentH = listCount() * ROW_H;
-        gfx.fill(sbX, listTop, sbX + SB_W, listBot, COL_SCROLLBAR);
+        gfx.fill(sbX, listTop, sbX + SB_W, listBottom, COL_SCROLLBAR);
         if (contentH > vpH) {
             int thumbH = Math.max(16, vpH * vpH / contentH);
-            int thumbY = listTop + (maxScroll() > 0 ? (vpH - thumbH) * scroll / maxScroll() : 0);
+            int thumbRange = vpH - thumbH;
+            int thumbY = listTop + (maxScroll() > 0 ? thumbRange * scrollOffset / maxScroll() : 0);
             gfx.fill(sbX, thumbY, sbX + SB_W, thumbY + thumbH, COL_SCROLL_TH);
         }
+
+        // ── Footer separator ──────────────────────────────────────────────────
+        gfx.fill(px, py + ph - FOOTER_H, px + pw, py + ph - FOOTER_H + 1, COL_BORDER);
+
+        // ── Preview panel (drawn last so it layers on top) ────────────────────
+        if (previewOpen) {
+            renderPreview(gfx, tr, mouseX, mouseY);
+        }
     }
 
-    private void renderDetail(DrawContext gfx, TextRenderer tr) {
-        ItemScore s = selectedItem;
-        int pvX = px + pw + DET_GAP;
-        int pvY = py, pvW = DET_W, pvH = ph;
+    private void renderPreview(DrawContext gfx, net.minecraft.client.font.TextRenderer tr,
+            int mouseX, int mouseY) {
+        int pvX = px + pw + PREV_GAP;
+        int pvY = py;
+        int pvW = PREV_W;
+        int pvH = ph;
 
-        gfx.fill(pvX, pvY, pvX + pvW, pvY + pvH, COL_DETAIL_BG);
-        gfx.fill(pvX, pvY, pvX + 1, pvY + pvH, COL_BORDER);
-        gfx.fill(pvX + pvW - 1, pvY, pvX + pvW, pvY + pvH, COL_BORDER);
-        gfx.fill(pvX, pvY, pvX + pvW, pvY + 1, COL_BORDER);
-        gfx.fill(pvX, pvY + pvH - 1, pvX + pvW, pvY + pvH, COL_BORDER);
-        gfx.fill(pvX, pvY, pvX + pvW, pvY + DET_HDR, COL_DETAIL_HD);
-        gfx.fill(pvX, pvY + DET_HDR - 1, pvX + pvW, pvY + DET_HDR, COL_BORDER);
-        gfx.drawText(tr, "ITEM DETAIL", pvX + DET_PAD, pvY + (DET_HDR - 8) / 2, COL_ACCENT, false);
+        // Background + border
+        gfx.fill(pvX, pvY, pvX + pvW, pvY + pvH, COL_PREVIEW_BG);
+        gfx.fill(pvX, pvY, pvX + 1, pvY + pvH, COL_BORDER); // left edge
+        gfx.fill(pvX + pvW - 1, pvY, pvX + pvW, pvY + pvH, COL_BORDER); // right edge
+        gfx.fill(pvX, pvY, pvX + pvW, pvY + 1, COL_BORDER); // top edge
+        gfx.fill(pvX, pvY + pvH - 1, pvX + pvW, pvY + pvH, COL_BORDER); // bottom edge
+        gfx.fill(pvX, pvY + PREV_HEADER - 1, pvX + pvW, pvY + PREV_HEADER, COL_BORDER);
 
-        int cy = pvY + DET_HDR + 8;
+        // Header
+        gfx.fill(pvX, pvY, pvX + pvW, pvY + PREV_HEADER, COL_PREVIEW_HD);
+        gfx.drawText(tr, "LAST SCORED ITEM",
+                pvX + PREV_PAD, pvY + (PREV_HEADER - 8) / 2, COL_ACCENT, false);
+        // [×] button is a managed widget — skip drawing it here
 
-        gfx.drawText(tr, trunc(tr, s.displayName, pvW - DET_PAD * 2 - 16), pvX + DET_PAD, cy, COL_TEXT, false);
-        cy += 11;
-        gfx.drawText(tr, s.productId, pvX + DET_PAD, cy, COL_TEXT_DIM, false);
-        cy += 13;
-        div(gfx, pvX, pvW, cy);
-        cy += 6;
-
-        drow(gfx, tr, pvX, pvW, cy, "Ask price", fmtD(s.askPrice), COL_RED);
-        cy += DET_ROW;
-        drow(gfx, tr, pvX, pvW, cy, "Bid price", fmtD(s.bidPrice), COL_GREEN);
-        cy += DET_ROW;
-        int npcCol = s.npcSellPrice > s.askPrice ? COL_GREEN : COL_TEXT_DIM;
-        drow(gfx, tr, pvX, pvW, cy, "NPC sell", s.npcSellPrice > 0 ? fmtD(s.npcSellPrice) : "N/A", npcCol);
-        cy += DET_ROW;
-        div(gfx, pvX, pvW, cy);
-        cy += 6;
-
-        drow(gfx, tr, pvX, pvW, cy, "Spread",
-                fmtD(s.spread) + " (" + String.format("%.1f", s.spreadPercent * 100) + "%)",
-                COL_YELLOW);
-        cy += DET_ROW;
-        div(gfx, pvX, pvW, cy);
-        cy += 6;
-
-        drow(gfx, tr, pvX, pvW, cy, "Fill/hr", String.format("%.0f", s.fillRatePerHour), COL_TEXT);
-        cy += DET_ROW;
-        drow(gfx, tr, pvX, pvW, cy, "Buy vol/wk", fmtD(s.buyMovingWeek), COL_TEXT);
-        cy += DET_ROW;
-        drow(gfx, tr, pvX, pvW, cy, "Sell vol/wk", fmtD(s.sellMovingWeek), COL_TEXT);
-        cy += DET_ROW;
-        div(gfx, pvX, pvW, cy);
-        cy += 6;
-
-        drow(gfx, tr, pvX, pvW, cy, "BZ profit/hr", fmtD(s.weeklyProfit), COL_GREEN);
-        cy += DET_ROW;
-        drow(gfx, tr, pvX, pvW, cy, "BZ total profit", fmtD(s.totalProfit), COL_GREEN);
-        cy += DET_ROW;
-        drow(gfx, tr, pvX, pvW, cy, "Order amount", String.valueOf(s.purchasableAmount), COL_TEXT);
-        cy += DET_ROW;
-
-        if (s.npcSellPrice > s.askPrice) {
-            div(gfx, pvX, pvW, cy);
-            cy += 6;
-            drow(gfx, tr, pvX, pvW, cy, "NPC profit/hr", fmtD(s.npcProfitPerHour), COL_CYAN);
-            cy += DET_ROW;
-            drow(gfx, tr, pvX, pvW, cy, "NPC per item", fmtD(s.npcProfitPerItem), COL_CYAN);
-            cy += DET_ROW;
+        if (previewLoading) {
+            gfx.drawText(tr, "Calculating\u2026",
+                    pvX + PREV_PAD, pvY + PREV_HEADER + 14, COL_TEXT_DIM, false);
+            return;
         }
+
+        ItemScore s = ItemSelector.lastBest;
+
+        if (s == null) {
+            gfx.drawText(tr, "No item scored yet.",
+                    pvX + PREV_PAD, pvY + PREV_HEADER + 14, COL_TEXT_DIM, false);
+            gfx.drawText(tr, "Start the bot to see results.",
+                    pvX + PREV_PAD, pvY + PREV_HEADER + 26, COL_TEXT_DIM, false);
+            return;
+        }
+
+        int cy = pvY + PREV_HEADER + 10;
+
+        // ── Item name ─────────────────────────────────────────────────────────
+        gfx.drawText(tr, s.displayName, pvX + PREV_PAD, cy, COL_TEXT, false);
+        cy += 12;
+        gfx.drawText(tr, s.productId, pvX + PREV_PAD, cy, COL_TEXT_DIM, false);
+        cy += 16;
+        gfx.fill(pvX + PREV_PAD, cy, pvX + pvW - PREV_PAD, cy + 1, COL_DIVIDER);
+        cy += 8;
+
+        // ── Price rows ────────────────────────────────────────────────────────
+        previewRow(gfx, tr, pvX, cy, "Ask price",
+                fmtCoinsD(s.askPrice), COL_RED);
+        cy += PREV_ROW;
+        previewRow(gfx, tr, pvX, cy, "Bid price",
+                fmtCoinsD(s.bidPrice), COL_GREEN);
+        cy += PREV_ROW;
+
+        gfx.fill(pvX + PREV_PAD, cy, pvX + pvW - PREV_PAD, cy + 1, COL_DIVIDER);
+        cy += 8;
+
+        // ── Spread ────────────────────────────────────────────────────────────
+        previewRow(gfx, tr, pvX, cy, "Spread",
+                fmtCoinsD(s.spread) + "  (" + String.format("%.1f", s.spreadPercent * 100) + "%)",
+                COL_YELLOW);
+        cy += PREV_ROW;
+
+        gfx.fill(pvX + PREV_PAD, cy, pvX + pvW - PREV_PAD, cy + 1, COL_DIVIDER);
+        cy += 8;
+
+        // ── Volume / velocity ─────────────────────────────────────────────────
+        double sellsPerHr = Math.min(s.buyMovingWeek, s.sellMovingWeek)
+                / s.askPrice / ItemScore.HOURS_PER_WEEK;
+        previewRow(gfx, tr, pvX, cy, "Sells/hr",
+                String.format("%.0f", sellsPerHr), COL_TEXT);
+        cy += PREV_ROW;
+        previewRow(gfx, tr, pvX, cy, "Buy vol/wk",
+                fmtCoinsD(s.buyMovingWeek), COL_TEXT);
+        cy += PREV_ROW;
+        previewRow(gfx, tr, pvX, cy, "Sell vol/wk",
+                fmtCoinsD(s.sellMovingWeek), COL_TEXT);
+        cy += PREV_ROW;
+
+        gfx.fill(pvX + PREV_PAD, cy, pvX + pvW - PREV_PAD, cy + 1, COL_DIVIDER);
+        cy += 8;
+
+        // ── Profit ────────────────────────────────────────────────────────────
+        previewRow(gfx, tr, pvX, cy, "Profit/hr",
+                fmtCoinsD(s.weeklyProfit), COL_GREEN);
+        cy += PREV_ROW;
+        previewRow(gfx, tr, pvX, cy, "Total profit",
+                fmtCoinsD(s.totalProfit), COL_GREEN);
+        cy += PREV_ROW;
+        previewRow(gfx, tr, pvX, cy, "Amount",
+                String.valueOf(s.purchasableAmount), COL_TEXT);
+        cy += PREV_ROW;
+
+        // ── Status badges ─────────────────────────────────────────────────────
+        cy += 4;
+        gfx.fill(pvX + PREV_PAD, cy, pvX + pvW - PREV_PAD, cy + 1, COL_DIVIDER);
+        cy += 8;
 
         if (s.manipulated) {
-            cy += 4;
-            div(gfx, pvX, pvW, cy);
-            cy += 6;
-            gfx.fill(pvX + DET_PAD, cy - 2, pvX + pvW - DET_PAD, cy + 10, 0x44FF4455);
-            gfx.drawText(tr, "\u26A0 LIKELY MANIPULATED", pvX + DET_PAD, cy, COL_RED, false);
-            cy += DET_ROW;
+            gfx.fill(pvX + PREV_PAD, cy - 2, pvX + pvW - PREV_PAD, cy + 10, 0x44FF4455);
+            gfx.drawText(tr, "\u26A0 POSSIBLY MANIPULATED",
+                    pvX + PREV_PAD, cy, COL_RED, false);
+            cy += PREV_ROW;
         }
+
         if (ModConfig.get().debugMode) {
-            gfx.fill(pvX + DET_PAD, cy - 2, pvX + pvW - DET_PAD, cy + 10, 0x44FFDD44);
-            gfx.drawText(tr, "\u26A0 DEBUG — buying 1 item", pvX + DET_PAD, cy, COL_YELLOW, false);
+            gfx.fill(pvX + PREV_PAD, cy - 2, pvX + pvW - PREV_PAD, cy + 10, 0x44FFDD44);
+            gfx.drawText(tr, "\u26A0 DEBUG — buying 1 item",
+                    pvX + PREV_PAD, cy, COL_YELLOW, false);
         }
     }
 
-    // ── Render helpers ────────────────────────────────────────────────────────
-
-    private void sortHdr(DrawContext gfx, TextRenderer tr, String text, int x, int y, boolean active) {
-        gfx.drawText(tr, active ? text + " \u25BE" : text, x, y + 4,
-                active ? COL_ACCENT : COL_TEXT_DIM, false);
+    /** Renders a dim label on the left and a coloured value on the right. */
+    private void previewRow(DrawContext gfx, net.minecraft.client.font.TextRenderer tr,
+            int pvX, int y, String label, String value, int valueCol) {
+        gfx.drawText(tr, label, pvX + PREV_PAD, y, COL_TEXT_DIM, false);
+        int vw = tr.getWidth(value);
+        gfx.drawText(tr, value, pvX + PREV_W - PREV_PAD - vw, y, valueCol, false);
     }
 
-    private void div(DrawContext gfx, int pvX, int pvW, int y) {
-        gfx.fill(pvX + DET_PAD, y, pvX + pvW - DET_PAD, y + 1, COL_DIVIDER);
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Compact int coin format: 500K, 1.2M */
+    private static String fmtCoins(int coins) {
+        if (coins >= 1_000_000)
+            return String.format("%.1fM", coins / 1_000_000.0);
+        if (coins >= 1_000)
+            return (coins / 1_000) + "K";
+        return String.valueOf(coins);
     }
 
-    private void drow(DrawContext gfx, TextRenderer tr, int pvX, int pvW,
-            int y, String label, String value, int col) {
-        gfx.drawText(tr, label, pvX + DET_PAD, y, COL_TEXT_DIM, false);
-        gfx.drawText(tr, value, pvX + pvW - DET_PAD - tr.getWidth(value), y, col, false);
+    /** Compact double coin format for ItemScore fields */
+    private static String fmtCoinsD(double coins) {
+        if (coins >= 1_000_000)
+            return String.format("%.2fM", coins / 1_000_000.0);
+        if (coins >= 1_000)
+            return String.format("%.1fK", coins / 1_000.0);
+        return String.format("%.0f", coins);
     }
 
-    // ── Format helpers ────────────────────────────────────────────────────────
-
-    private static String fmtD(double v) {
-        if (v >= 1_000_000_000)
-            return String.format("%.1fB", v / 1_000_000_000.0);
-        if (v >= 1_000_000)
-            return String.format("%.2fM", v / 1_000_000.0);
-        if (v >= 1_000)
-            return String.format("%.1fK", v / 1_000.0);
-        return String.format("%.0f", v);
+    private ButtonWidget toggle(String label, boolean on, int x, int y,
+            ButtonWidget.PressAction action) {
+        return ButtonWidget.builder(Text.literal(label + (on ? " \u25CF" : " \u25CB")), action)
+                .dimensions(x, y, TOG_W, TOG_H).build();
     }
 
-    private static String trunc(TextRenderer tr, String text, int maxW) {
-        if (tr.getWidth(text) <= maxW)
-            return text;
-        while (!text.isEmpty() && tr.getWidth(text + "\u2026") > maxW)
-            text = text.substring(0, text.length() - 1);
-        return text + "\u2026";
+    private ButtonWidget smallBtn(String label, int x, int y, Runnable action) {
+        return ButtonWidget.builder(Text.literal(label), btn -> action.run())
+                .dimensions(x, y, 14, 14).build();
+    }
+
+    private ButtonWidget smallBtn(String label, int x, int y, ButtonWidget.PressAction action) {
+        return ButtonWidget.builder(Text.literal(label), action)
+                .dimensions(x, y, 14, 14).build();
+    }
+
+    private ButtonWidget styledButton(String label, int x, int y, int w, int h,
+            ButtonWidget.PressAction onPress) {
+        return ButtonWidget.builder(Text.literal(label), onPress)
+                .dimensions(x, y, w, h).build();
     }
 }
