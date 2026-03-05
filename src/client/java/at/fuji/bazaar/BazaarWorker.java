@@ -41,7 +41,7 @@ public class BazaarWorker {
      * Human-readable display name (e.g. "Enchanted Sugar"). Used for commands and
      * slot scanning.
      */
-    static String itemName = null;
+    public static String itemName = null;
 
     static MinecraftClient client = MinecraftClient.getInstance();
     static List<String> menuItems = List.of("Custom Amount", "Create Buy Order", "Top Order +0.1");

@@ -47,7 +47,7 @@ public class ItemSelector {
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    /** Convenience wrapper — BazaarWorker uses this to pick one item. */
+    /** Convenience wrapper — picks the highest-scoring item. */
     public static CompletableFuture<ItemScore> selectBestItem(double purse) {
         return scoreAllItems(purse).thenApply(r -> {
             if (r == null || r.candidates.isEmpty())
@@ -92,19 +92,28 @@ public class ItemSelector {
                         int sellOrd = qs.get("sellOrders").getAsInt();
                         double npcP = HypixelBazaarApi.getNpcSellPriceSync(productId);
 
-                        // ── Hard validity checks ───────────────────────────
+                        // ── Hard validity ──────────────────────────────────
                         if (askPrice <= 0 || bidPrice <= 0) {
-                            rejected.add(rej(productId, displayName, askPrice, bidPrice, "Invalid price"));
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                    "Invalid price"));
                             continue;
                         }
-                        // Price floor — filters out cheap garbage like Raw Rabbit (130 coins)
-                        if (askPrice < 500) {
+                        // Price floor — eliminates <500-coin garbage
+                        if (askPrice < 200) {
                             rejected.add(rej(productId, displayName, askPrice, bidPrice,
                                     "Price floor (<500)"));
                             continue;
                         }
                         if (purse < askPrice) {
-                            rejected.add(rej(productId, displayName, askPrice, bidPrice, "Can't afford"));
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                    "Can't afford"));
+                            continue;
+                        }
+
+                        // ── Sell-orders filter ─────────────────────────────
+                        if (cfg.minSellOrders > 0 && sellOrd < cfg.minSellOrders) {
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                    "Sell orders " + sellOrd + " < " + cfg.minSellOrders));
                             continue;
                         }
 
@@ -113,7 +122,7 @@ public class ItemSelector {
                         if (npcMode) {
                             if (npcP <= askPrice) {
                                 rejected.add(rej(productId, displayName, askPrice, bidPrice,
-                                        "NPC " + fmt(npcP) + " ≤ ask"));
+                                        "NPC " + fmt(npcP) + " \u2264 ask"));
                                 continue;
                             }
                             profitPerItem = npcP - askPrice;
@@ -121,16 +130,17 @@ public class ItemSelector {
                         } else {
                             double spread = askPrice - bidPrice;
                             if (spread <= 0) {
-                                rejected.add(rej(productId, displayName, askPrice, bidPrice, "No spread"));
-                                continue;
-                            }
-                            // Absolute floor: ≥100 coins spread so tax doesn't eat profit
-                            if (spread < 100) {
                                 rejected.add(rej(productId, displayName, askPrice, bidPrice,
-                                        "Spread <100 coins"));
+                                        "No spread"));
                                 continue;
                             }
-                            // Relative floor: ≥1% spread
+                            // Configurable absolute margin
+                            if (spread < cfg.minMargin) {
+                                rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                        "Margin " + fmt(spread) + " < " + fmt(cfg.minMargin)));
+                                continue;
+                            }
+                            // Relative floor: ≥1% spread to survive 1% Hypixel tax
                             if (spread / askPrice < 0.01) {
                                 rejected.add(rej(productId, displayName, askPrice, bidPrice,
                                         "Spread% <1%"));
@@ -140,11 +150,11 @@ public class ItemSelector {
                             salesPerWeek = Math.min(buyVol, sellVol) / askPrice;
                         }
 
-                        // Volume filter
+                        // ── Volume filter ──────────────────────────────────
                         double slowVol = Math.min(buyVol, sellVol);
                         if (slowVol < cfg.minWeeklyVolume) {
                             rejected.add(rej(productId, displayName, askPrice, bidPrice,
-                                    "Vol too low (" + fmt(slowVol) + ")"));
+                                    "Vol " + fmt(slowVol) + " < " + fmt(cfg.minWeeklyVolume)));
                             continue;
                         }
 
@@ -154,17 +164,17 @@ public class ItemSelector {
                         if (profitPerHour <= 0)
                             continue;
 
-                        // Sells/hr filter
+                        // ── Fill-rate filter ───────────────────────────────
                         if (fillRatePerHour < cfg.minSellsPerHour) {
                             rejected.add(rej(productId, displayName, askPrice, bidPrice,
-                                    "Fill rate " + (int) fillRatePerHour + "/hr < " + cfg.minSellsPerHour));
+                                    "Fill " + (int) fillRatePerHour + "/hr < " + cfg.minSellsPerHour));
                             continue;
                         }
 
-                        // Profit/hr filter (togglable)
+                        // ── Profit/hr filter (togglable) ───────────────────
                         if (cfg.minProfitPerHourEnabled && profitPerHour < cfg.minProfitPerHour) {
                             rejected.add(rej(productId, displayName, askPrice, bidPrice,
-                                    "Profit/hr " + fmt(profitPerHour) + " < " + fmt(cfg.minProfitPerHour)));
+                                    "P/hr " + fmt(profitPerHour) + " < " + fmt(cfg.minProfitPerHour)));
                             continue;
                         }
 
@@ -176,11 +186,12 @@ public class ItemSelector {
                                 purse, npcP);
 
                         if (score.purchasableAmount < 1) {
-                            rejected.add(rej(productId, displayName, askPrice, bidPrice, "Can't afford any"));
+                            rejected.add(rej(productId, displayName, askPrice, bidPrice,
+                                    "Can't afford any"));
                             continue;
                         }
 
-                        // Manipulation check
+                        // ── Manipulation ───────────────────────────────────
                         boolean orderImbalance = buyOrd > 0 && sellOrd > 0
                                 && (double) Math.max(buyOrd, sellOrd) / Math.min(buyOrd, sellOrd) > 20.0;
                         boolean thinVolume = fillRatePerHour < 1.0 && profitPerItem > 50_000;
@@ -190,10 +201,10 @@ public class ItemSelector {
                             continue;
                         }
 
-                        // Total profit filter (togglable)
+                        // ── Total-profit filter (togglable) ────────────────
                         if (cfg.minTotalProfitEnabled && score.totalProfit < cfg.minTotalProfit) {
                             rejected.add(rej(productId, displayName, askPrice, bidPrice,
-                                    "Total profit " + fmt(score.totalProfit) + " < " + fmt(cfg.minTotalProfit)));
+                                    "Total " + fmt(score.totalProfit) + " < " + fmt(cfg.minTotalProfit)));
                             continue;
                         }
 

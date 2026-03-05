@@ -12,52 +12,56 @@ public class ModConfig {
     private static final Path CONFIG_PATH = FabricLoader.getInstance()
             .getConfigDir().resolve("fuji.json");
 
-    // ── API ───────────────────────────────────────────────────────────────────
     public String apiKey = "";
-
-    // ── Targets ───────────────────────────────────────────────────────────────
     public List<SavedTarget> targets = new ArrayList<>();
-
-    // ── Bazaar blacklist ──────────────────────────────────────────────────────
     public List<String> bazaarBlacklist = new ArrayList<>(List.of(
             "ESSENCE_UNDEAD", "ESSENCE_DRAGON", "ESSENCE_WITHER",
             "ESSENCE_SPIDER", "ESSENCE_GOLD", "ESSENCE_DIAMOND",
             "ESSENCE_ICE", "ESSENCE_CRIMSON", "ESSENCE_HOLLOW"));
 
-    // ── Bazaar mode toggles ───────────────────────────────────────────────────
-    /**
-     * When true, bot collects filled buy order → sells at 2× ask → cancels sell →
-     * items return.
-     */
     public boolean npcSellMode = false;
-    /** Limits each purchase to 1 item for safe testing. */
     public boolean debugMode = false;
 
-    // ── Bazaar filters ────────────────────────────────────────────────────────
+    // ── Item-selector filters ─────────────────────────────────────────────────
+
+    /** Minimum items/hr on the slower side (fill rate). */
     public int minSellsPerHour = 50;
+
+    /** Minimum raw coin volume (slower side) per week. */
     public int minWeeklyVolume = 500_000;
 
-    /** Minimum profit per hour (coins). Filter is only applied when enabled. */
-    public int minProfitPerHour = 10_000;
-    public boolean minProfitPerHourEnabled = true;
+    /**
+     * Minimum absolute spread in coins (ask - bid). Filters tax-eaten
+     * micro-spreads.
+     */
+    public int minMargin = 100;
 
-    /** Minimum total profit for one full order batch (spread × amount). */
+    /** Minimum number of active sell orders. 0 = disabled. */
+    public int minSellOrders = 0;
+
+    /** Minimum profit/hr. Togglable. */
+    public int minProfitPerHour = 10_000;
+    public boolean minProfitPerHourEnabled = false;
+
+    /** Minimum total profit from one full order. Togglable. */
     public int minTotalProfit = 50_000;
     public boolean minTotalProfitEnabled = false;
 
-    // ── Saved target ──────────────────────────────────────────────────────────
+    // ── Saved targets ─────────────────────────────────────────────────────────
+
     public static class SavedTarget {
         public String mobName;
         public boolean waypointEnabled;
         public boolean tracerEnabled;
+        public float radius;
         public boolean enabled = true;
         public boolean alertEnabled = false;
         public boolean showDistanceEnabled = false;
-        public float radius;
         public int color = 0xFFB044FF;
     }
 
     // ── Singleton ─────────────────────────────────────────────────────────────
+
     private static ModConfig instance;
 
     public static ModConfig get() {
@@ -85,8 +89,13 @@ public class ModConfig {
                 instance.minWeeklyVolume = 500_000;
             if (instance.minProfitPerHour < 0)
                 instance.minProfitPerHour = 10_000;
-            if (instance.minTotalProfit <= 0)
+            if (instance.minTotalProfit < 0)
                 instance.minTotalProfit = 50_000;
+            if (instance.minMargin < 0)
+                instance.minMargin = 100;
+            if (instance.minSellOrders < 0)
+                instance.minSellOrders = 0;
+            System.out.println("[Fuji] Config loaded.");
         } catch (Exception e) {
             System.err.println("[Fuji] Failed to load config: " + e.getMessage());
             instance = new ModConfig();
@@ -108,10 +117,10 @@ public class ModConfig {
             s.mobName = t.mobName;
             s.waypointEnabled = t.waypointEnabled;
             s.tracerEnabled = t.tracerEnabled;
+            s.radius = t.radius;
             s.enabled = t.enabled;
             s.alertEnabled = t.alertEnabled;
             s.showDistanceEnabled = t.showDistanceEnabled;
-            s.radius = t.radius;
             s.color = t.color;
             targets.add(s);
         }
@@ -122,12 +131,14 @@ public class ModConfig {
             return;
         at.fuji.target.TargetManager.targets.clear();
         for (SavedTarget s : targets) {
-            TargetConfig c = new TargetConfig(s.mobName, s.waypointEnabled, s.tracerEnabled, s.radius);
+            TargetConfig c = new TargetConfig(
+                    s.mobName, s.waypointEnabled, s.tracerEnabled, s.radius);
             c.enabled = s.enabled;
             c.alertEnabled = s.alertEnabled;
             c.showDistanceEnabled = s.showDistanceEnabled;
             c.color = s.color;
             at.fuji.target.TargetManager.targets.add(c);
         }
+        System.out.println("[Fuji] Loaded " + targets.size() + " targets.");
     }
 }
