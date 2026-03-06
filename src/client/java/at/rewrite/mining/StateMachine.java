@@ -1,5 +1,6 @@
 package at.rewrite.mining;
 
+import at.rewrite.ConfigManager;
 import at.rewrite.utils.GeneralUtils;
 import at.rewrite.utils.PlayerUtils;
 import at.rewrite.utils.WorldUtils;
@@ -19,6 +20,7 @@ public class StateMachine {
     private static BlockPos target;
     public static boolean enabled = false;
     private static MinecraftClient client = GeneralUtils.getClient();
+    public static String[] blocks = ConfigManager.config.targetBlocks.toArray(new String[0]);
 
     public static void start() {
         enabled = !enabled;
@@ -29,16 +31,16 @@ public class StateMachine {
     }
 
     public static void tick() {
-        if (!enabled) {
+        if (!enabled)
             return;
-        }
+
         switch (state) {
             case IDLE -> {
                 state = State.FINDING_BLOCK;
             }
 
             case FINDING_BLOCK -> {
-                target = WorldUtils.findBlock(5, new String[] { "minecraft:cobblestone" });
+                target = WorldUtils.findBlock(5, blocks);
                 if (target != null) {
                     state = State.LOOKING_AT;
                 } else {
@@ -47,15 +49,13 @@ public class StateMachine {
             }
 
             case LOOKING_AT -> {
-                if (PlayerUtils.isLookingAt("minecraft:cobblestone")) {
+                if (isLookingAtTarget()) {
                     state = State.MINING;
-                } else {
-                    PlayerUtils.lookAt(null, target);
                 }
             }
 
             case MINING -> {
-                if (PlayerUtils.isLookingAt("minecraft:cobblestone")) {
+                if (isLookingAtTarget()) {
                     client.options.attackKey.setPressed(true);
                 } else {
                     client.options.attackKey.setPressed(false);
@@ -66,7 +66,25 @@ public class StateMachine {
             case DONE -> {
                 target = null;
                 state = State.IDLE;
+                PlayerUtils.resetVelocity();
             }
         }
+    }
+
+    public static void tickCamera(float deltaTime) {
+        if (!enabled)
+            return;
+        if (state == State.LOOKING_AT && target != null) {
+            PlayerUtils.lookAt(null, target, deltaTime);
+        }
+    }
+
+    private static boolean isLookingAtTarget() {
+        for (String block : blocks) {
+            if (PlayerUtils.isLookingAt(block)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
