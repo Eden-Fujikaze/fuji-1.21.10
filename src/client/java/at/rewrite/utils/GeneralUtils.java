@@ -8,21 +8,17 @@ import net.minecraft.world.World;
 
 public class GeneralUtils {
     public static PlayerEntity getPlayer() {
+        assert getClient() != null;
         return getClient().player;
     }
 
     public static MinecraftClient getClient() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null)
-            return null;
-        return client;
+        return MinecraftClient.getInstance();
     }
 
     public static World getWorld() {
-        World world = getClient().world;
-        if (world == null)
-            return null;
-        return world;
+        assert getClient() != null;
+        return getClient().world;
     }
 
     public static Scoreboard getScoreboard() {
@@ -33,9 +29,7 @@ public class GeneralUtils {
     }
 
     public static Camera getCamera() {
-        Camera camera = getClient().gameRenderer.getCamera();
-        if (camera == null)
-            return null;
-        return camera;
+        assert getClient() != null;
+        return getClient().gameRenderer.getCamera();
     }
 }
