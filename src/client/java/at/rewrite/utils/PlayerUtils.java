@@ -14,19 +14,24 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.Random;
-import java.util.function.Function;
 
 public class PlayerUtils {
 
+    public static float THRESHOLD = 0.1f;
+
     private static float yawVelocity = 0f;
     private static float pitchVelocity = 0f;
+
     private static float noiseYaw = 0f;
     private static float noisePitch = 0f;
     private static final Random random = new Random();
 
-    private static float cfg(Function<FujiConfig, Float> getter) {
-        return getter.apply(FujiConfig.HANDLER.instance());
-    }
+    private static final float ACCELERATION = 0.8f;
+    private static final float FRICTION = 0.1f;
+    private static final float MAX_VELOCITY = 2.0f;
+    private static final float NOISE_STRENGTH = 1.6f;
+    private static final float NOISE_FADE_DIST = 6.0f;
+    private static final float NOISE_DRIFT = 0.15f;
 
     private static float wrapAngle(float angle) {
         return ((angle % 360f) + 360f) % 360f;
@@ -50,8 +55,10 @@ public class PlayerUtils {
     }
 
     public static void lookAt(@Nullable Vec3d entityPos, @Nullable BlockPos blockPos, float deltaTime) {
-        if (entityPos == null && blockPos == null) return;
-        if (entityPos != null && blockPos != null) return;
+        if (entityPos == null && blockPos == null)
+            return;
+        if (entityPos != null && blockPos != null)
+            return;
 
         PlayerEntity player = GeneralUtils.getPlayer();
         if (player == null) return;
@@ -66,34 +73,34 @@ public class PlayerUtils {
         float pitchDiff = angleDiff(player.getPitch(), targetPitch);
         float totalDist = (float) Math.sqrt(yawDiff * yawDiff + pitchDiff * pitchDiff);
 
+        // Scale factor — deltaTime of 1.0 == one full tick (1/20s)
         float scale = deltaTime * 3f;
-        float noiseDecay = (float) Math.pow(0.92f, scale * 20f);
-        float noiseFactor = Math.min(1f, totalDist / cfg(c -> c.noiseFadeDist));
 
-        noiseYaw += (random.nextFloat() - 0.5f) * cfg(c -> c.noiseDrift) * scale;
-        noisePitch += (random.nextFloat() - 0.5f) * cfg(c -> c.noiseDrift) * scale;
+        // Frame-rate-independent exponential decay for noise
+        float noiseDecay = (float) Math.pow(0.92f, scale * 20f);
+
+        float noiseFactor = Math.min(1f, totalDist / NOISE_FADE_DIST);
+        noiseYaw += (random.nextFloat() - 0.5f) * NOISE_DRIFT * scale;
+        noisePitch += (random.nextFloat() - 0.5f) * NOISE_DRIFT * scale;
         noiseYaw *= noiseDecay;
         noisePitch *= noiseDecay;
-        noiseYaw = MathHelper.clamp(noiseYaw, -cfg(c -> c.noiseStrength), cfg(c -> c.noiseStrength));
-        noisePitch = MathHelper.clamp(noisePitch, -cfg(c -> c.noiseStrength), cfg(c -> c.noiseStrength));
+        noiseYaw = MathHelper.clamp(noiseYaw, -NOISE_STRENGTH, NOISE_STRENGTH);
+        noisePitch = MathHelper.clamp(noisePitch, -NOISE_STRENGTH, NOISE_STRENGTH);
 
-        yawVelocity += (yawDiff + noiseYaw * noiseFactor) * cfg(c -> c.acceleration) * scale;
-        pitchVelocity += (pitchDiff + noisePitch * noiseFactor) * cfg(c -> c.acceleration) * scale;
+        yawVelocity += (yawDiff + noiseYaw * noiseFactor) * ACCELERATION * scale;
+        pitchVelocity += (pitchDiff + noisePitch * noiseFactor) * ACCELERATION * scale;
 
-        yawVelocity = MathHelper.clamp(yawVelocity, -cfg(c -> c.maxVelocity), cfg(c -> c.maxVelocity));
-        pitchVelocity = MathHelper.clamp(pitchVelocity, -cfg(c -> c.maxVelocity), cfg(c -> c.maxVelocity));
+        yawVelocity = MathHelper.clamp(yawVelocity, -MAX_VELOCITY, MAX_VELOCITY);
+        pitchVelocity = MathHelper.clamp(pitchVelocity, -MAX_VELOCITY, MAX_VELOCITY);
 
         player.setYaw(player.getYaw() + yawVelocity * scale);
         player.setPitch(player.getPitch() + pitchVelocity * scale);
 
-        float frictionDecay = (float) Math.pow(cfg(c -> c.friction), scale * 20f);
+        // Frame-rate-independent friction decay
+        float frictionDecay = (float) Math.pow(FRICTION, scale * 20f);
         float nearFactor = 1f - Math.min(1f, totalDist / 3f) * 0.15f;
         yawVelocity *= frictionDecay * nearFactor;
         pitchVelocity *= frictionDecay * nearFactor;
-    }
-
-    public static void lookAt(@Nullable Vec3d entityPos, @Nullable BlockPos blockPos) {
-        lookAt(entityPos, blockPos, 1.0f);
     }
 
     public static void resetVelocity() {
