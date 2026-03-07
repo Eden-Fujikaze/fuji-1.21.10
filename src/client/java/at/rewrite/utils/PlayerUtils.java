@@ -1,5 +1,6 @@
 package at.rewrite.utils;
 
+import at.rewrite.FujiConfig;
 import org.jetbrains.annotations.Nullable;
 
 import net.minecraft.block.Block;
@@ -50,7 +51,7 @@ public class PlayerUtils {
         float yaw = (float) Math.toDegrees(MathHelper.atan2(dz, dx)) - 90f;
         float pitch = (float) -Math.toDegrees(MathHelper.atan2(dy, horizontalDist));
 
-        return new float[] { yaw, pitch };
+        return new float[]{ yaw, pitch };
     }
 
     public static void lookAt(@Nullable Vec3d entityPos, @Nullable BlockPos blockPos, float deltaTime) {
@@ -60,8 +61,7 @@ public class PlayerUtils {
             return;
 
         PlayerEntity player = GeneralUtils.getPlayer();
-        if (player == null)
-            return;
+        if (player == null) return;
 
         Vec3d target = (entityPos != null) ? entityPos : Vec3d.ofCenter(blockPos);
         float[] angles = getAnglesTo(target, player.getEyePos());
@@ -112,10 +112,8 @@ public class PlayerUtils {
 
     public static boolean isLookingAt(String blockId) {
         MinecraftClient client = GeneralUtils.getClient();
-        if (client.crosshairTarget == null)
-            return false;
-        if (client.crosshairTarget.getType() != HitResult.Type.BLOCK)
-            return false;
+        if (client.crosshairTarget == null) return false;
+        if (client.crosshairTarget.getType() != HitResult.Type.BLOCK) return false;
 
         BlockHitResult hitResult = (BlockHitResult) client.crosshairTarget;
         Block block = client.world.getBlockState(hitResult.getBlockPos()).getBlock();

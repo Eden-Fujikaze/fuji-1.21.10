@@ -6,6 +6,8 @@ import java.util.Comparator;
 import java.util.List;
 
 import net.minecraft.block.BlockState;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.hit.BlockHitResult;
@@ -29,7 +31,25 @@ public class WorldUtils {
         BlockHitResult result = world.raycast(ctx);
         return result.getBlockPos().equals(target);
     }
+    public static Vec3d findEntity(String name, float radius) {
+        MinecraftClient mc = GeneralUtils.getClient();
+        if (mc.world == null || mc.player ==null) {
+            return null;
+        }
 
+        String normalizedName = name.toLowerCase();
+
+        return mc.world.getNonSpectatingEntities(LivingEntity.class,
+                mc.player.getBoundingBox().expand(radius))
+                .stream()
+                .filter(e-> {
+                    String entityName = e.getName().getString().toLowerCase();
+                    return entityName.contains(normalizedName);
+                })
+                .min(Comparator.comparingDouble(e-> e.squaredDistanceTo(mc.player)))
+                .map(e -> e.getEntityPos().add(0, e.getHeight() / 2, 0))
+                .orElse(null);
+    }
     public static BlockPos findBlock(int radius, String[] validBlocks) {
         PlayerEntity player = GeneralUtils.getPlayer();
         if (player == null)

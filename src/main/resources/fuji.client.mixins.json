@@ -1,9 +1,9 @@
 {
   "required": true,
-  "package": "at.fuji.mixin.client",
-  "compatibilityLevel": "JAVA_17",
+  "package": "at.rewrite.mixin.client",
+  "compatibilityLevel": "JAVA_21",
   "client": [
-    "SidebarFullReaderMixin"
+    "UnfocusedTickMixin"
   ],
   "injectors": {
     "defaultRequire": 1

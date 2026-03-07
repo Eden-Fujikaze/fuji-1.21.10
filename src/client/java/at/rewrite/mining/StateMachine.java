@@ -5,6 +5,7 @@ import at.rewrite.utils.GeneralUtils;
 import at.rewrite.utils.PlayerUtils;
 import at.rewrite.utils.WorldUtils;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.util.math.BlockPos;
 
 public class StateMachine {
@@ -35,9 +36,7 @@ public class StateMachine {
             return;
 
         switch (state) {
-            case IDLE -> {
-                state = State.FINDING_BLOCK;
-            }
+            case IDLE -> state = State.FINDING_BLOCK;
 
             case FINDING_BLOCK -> {
                 target = WorldUtils.findBlock(5, blocks);
