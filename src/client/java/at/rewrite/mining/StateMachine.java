@@ -1,13 +1,14 @@
 package at.rewrite.mining;
 
+import at.rewrite.ConfigManager;
 import at.rewrite.utils.GeneralUtils;
 import at.rewrite.utils.PlayerUtils;
 import at.rewrite.utils.WorldUtils;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.util.math.BlockPos;
 
 public class StateMachine {
+
     public enum State {
         IDLE,
         FINDING_BLOCK,
@@ -19,16 +20,43 @@ public class StateMachine {
     private static State state = State.IDLE;
     private static BlockPos target;
     public static boolean enabled = false;
-    public static String[] blocks = new String[]{};
     private static final MinecraftClient client = GeneralUtils.getClient();
 
+    /** Live block array — call reloadBlocks() after modifying the config list. */
+    public static String[] blocks = ConfigManager.config.targetBlocks.toArray(new String[0]);
+
+    // ── Control ───────────────────────────────────────────────────────────────
+
+    /** Toggle the mining system on/off (keybind). */
     public static void start() {
-        enabled = !enabled;
-        if (enabled) {
-            state = State.IDLE;
-            target = null;
-        }
+        if (enabled) disable(); else enable();
     }
+
+    /** Enable and reset state — call this when turning on from any context. */
+    public static void enable() {
+        enabled = true;
+        state = State.IDLE;
+        target = null;
+        client.options.attackKey.setPressed(false);
+    }
+
+    /** Disable and clean up. */
+    public static void disable() {
+        enabled = false;
+        state = State.IDLE;
+        target = null;
+        client.options.attackKey.setPressed(false);
+    }
+
+    /**
+     * Reload the block array from config.
+     * Call this whenever {@link at.rewrite.ModConfig#targetBlocks} changes.
+     */
+    public static void reloadBlocks() {
+        blocks = ConfigManager.config.targetBlocks.toArray(new String[0]);
+    }
+
+    // ── Tick ──────────────────────────────────────────────────────────────────
 
     public static void tick() {
         if (!enabled) return;
@@ -37,20 +65,12 @@ public class StateMachine {
             case IDLE -> state = State.FINDING_BLOCK;
 
             case FINDING_BLOCK -> {
-                assert client.player != null;
-                double reach = client.player.getAttributeValue(EntityAttributes.BLOCK_INTERACTION_RANGE);
-                target = WorldUtils.findBlock((int) reach, blocks);
-                if (target != null) {
-                    state = State.LOOKING_AT;
-                } else {
-                    state = State.DONE;
-                }
+                target = WorldUtils.findBlock(5, blocks);
+                state = (target != null) ? State.LOOKING_AT : State.DONE;
             }
 
             case LOOKING_AT -> {
-                if (isLookingAtTarget()) {
-                    state = State.MINING;
-                }
+                if (isLookingAtTarget()) state = State.MINING;
             }
 
             case MINING -> {
@@ -65,21 +85,22 @@ public class StateMachine {
             case DONE -> {
                 target = null;
                 state = State.IDLE;
+                PlayerUtils.resetVelocity();
             }
         }
     }
 
     public static void tickCamera(float deltaTime) {
         if (!enabled) return;
-        if (state == State.LOOKING_AT && target != null) {
+        if (state == State.LOOKING_AT && target != null)
             PlayerUtils.lookAt(null, target, deltaTime);
-        }
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
     private static boolean isLookingAtTarget() {
-        for (String block : blocks) {
+        for (String block : blocks)
             if (PlayerUtils.isLookingAt(block)) return true;
-        }
         return false;
     }
 }

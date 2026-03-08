@@ -7,6 +7,7 @@ import java.util.List;
 
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.registry.Registries;
@@ -47,7 +48,7 @@ public class WorldUtils {
                     return entityName.contains(normalizedName);
                 })
                 .min(Comparator.comparingDouble(e-> e.squaredDistanceTo(mc.player)))
-                .map(e -> e.getEntityPos().add(0, e.getHeight() / 2, 0))
+                .map(Entity::getEyePos)
                 .orElse(null);
     }
     public static BlockPos findBlock(int radius, String[] validBlocks) {

@@ -1,6 +1,6 @@
 package at.rewrite.utils;
 
-import at.rewrite.FujiConfig;
+import at.rewrite.ConfigManager;
 import org.jetbrains.annotations.Nullable;
 
 import net.minecraft.block.Block;
@@ -14,22 +14,25 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.Random;
-import java.util.function.Function;
 
 public class PlayerUtils {
 
-    private static float yawVelocity = 0f;
+    private static float yawVelocity   = 0f;
     private static float pitchVelocity = 0f;
-    private static float noiseYaw = 0f;
-    private static float noisePitch = 0f;
+
+    // Per-acquisition randomised aim state
+    private static Vec3d  lastTargetBase   = null;
+    private static float  aimOffsetYaw     = 0f;
+    private static float  aimOffsetPitch   = 0f;
+    private static float  thisSmoothing    = 8f;   // varies each acquisition
+    private static float  reactionTimer    = 0f;   // delay before moving
+    private static boolean hasOvershot     = false;
+    private static float  overshootAmount  = 0f;
+
     private static final Random random = new Random();
 
-    private static float cfg(Function<FujiConfig, Float> getter) {
-        return getter.apply(FujiConfig.HANDLER.instance());
-    }
-
-    private static float wrapAngle(float angle) {
-        return ((angle % 360f) + 360f) % 360f;
+    private static float wrapAngle(float a) {
+        return ((a % 360f) + 360f) % 360f;
     }
 
     private static float angleDiff(float current, float target) {
@@ -41,77 +44,118 @@ public class PlayerUtils {
         double dx = target.x - eyes.x;
         double dy = target.y - eyes.y;
         double dz = target.z - eyes.z;
-        double horizontalDist = Math.sqrt(dx * dx + dz * dz);
-
-        float yaw = (float) Math.toDegrees(MathHelper.atan2(dz, dx)) - 90f;
-        float pitch = (float) -Math.toDegrees(MathHelper.atan2(dy, horizontalDist));
-
+        double h  = Math.sqrt(dx * dx + dz * dz);
+        float yaw   = (float) Math.toDegrees(MathHelper.atan2(dz, dx)) - 90f;
+        float pitch = (float) -Math.toDegrees(MathHelper.atan2(dy, h));
         return new float[]{ yaw, pitch };
     }
 
-    public static void lookAt(@Nullable Vec3d entityPos, @Nullable BlockPos blockPos, float deltaTime) {
+    // Critically damped spring step — returns [angleDelta, newVelocity]
+    private static float[] springStep(float current, float goal, float vel,
+                                      float stiffness, float dt) {
+        float omega = 2f * stiffness;
+        float x     = omega * dt;
+        float exp   = (float) Math.exp(-x);
+        float delta = angleDiff(current, goal);
+        float newVel   = (vel + omega * delta) * exp - omega * delta * exp;
+        float newDelta = delta * (1f - exp) + vel * dt * exp;
+        return new float[]{ newDelta, newVel };
+    }
+
+    public static void lookAt(@Nullable Vec3d entityPos, @Nullable BlockPos blockPos,
+                              float deltaTime) {
         if (entityPos == null && blockPos == null) return;
         if (entityPos != null && blockPos != null) return;
 
         PlayerEntity player = GeneralUtils.getPlayer();
         if (player == null) return;
 
-        Vec3d target = (entityPos != null) ? entityPos : Vec3d.ofCenter(blockPos);
-        float[] angles = getAnglesTo(target, player.getEyePos());
+        at.rewrite.ModConfig cfg = ConfigManager.config;
 
-        float targetYaw = angles[0];
-        float targetPitch = angles[1];
+        // Aim at upper chest (~80% height) — not eye level, not centre.
+        // Feels natural and still registers hits.
+        Vec3d targetBase = entityPos != null ? entityPos : Vec3d.ofCenter(blockPos);
 
-        float yawDiff = angleDiff(player.getYaw(), targetYaw);
+        // New target acquired
+        if (lastTargetBase == null || targetBase.squaredDistanceTo(lastTargetBase) > 9.0) {
+            lastTargetBase = targetBase;
+            yawVelocity   = 0f;
+            pitchVelocity = 0f;
+            hasOvershot   = false;
+
+            // Randomise aim offset — horizontal spread wider than vertical
+            aimOffsetYaw   = (random.nextFloat() - 0.5f) * cfg.aimSlop * 2f;
+            aimOffsetPitch = (random.nextFloat() - 0.5f) * cfg.aimSlop;
+
+            // Randomise smoothing ±25% so no two flicks are identical
+            float variance = 0.25f;
+            thisSmoothing  = cfg.smoothing * (1f + (random.nextFloat() - 0.5f) * variance * 2f);
+
+            // Human reaction delay: 80–200ms, randomised
+            reactionTimer  = 0.08f + random.nextFloat() * 0.12f;
+
+            // Small overshoot — humans frequently go slightly past and correct
+            overshootAmount = (random.nextFloat() * cfg.overshoot);
+        }
+
+        // Reaction delay — don't move yet
+        reactionTimer -= deltaTime;
+        if (reactionTimer > 0f) return;
+
+        float[] angles    = getAnglesTo(targetBase, player.getEyePos());
+        float targetYaw   = angles[0] + aimOffsetYaw;
+        float targetPitch = angles[1] + aimOffsetPitch;
+
+        float yawDiff   = angleDiff(player.getYaw(),   targetYaw);
         float pitchDiff = angleDiff(player.getPitch(), targetPitch);
         float totalDist = (float) Math.sqrt(yawDiff * yawDiff + pitchDiff * pitchDiff);
 
-        float scale = deltaTime * 3f;
-        float noiseDecay = (float) Math.pow(0.92f, scale * 20f);
-        float noiseFactor = Math.min(1f, totalDist / cfg(c -> c.noiseFadeDist));
+        // Apply overshoot by extending the target just past the aim point
+        // — only on the way in, not after we've already overshot
+        float overshootBias = 0f;
+        if (!hasOvershot && totalDist < 5f && overshootAmount > 0f) {
+            overshootBias  = overshootAmount;
+            hasOvershot    = true;
+        }
 
-        noiseYaw += (random.nextFloat() - 0.5f) * cfg(c -> c.noiseDrift) * scale;
-        noisePitch += (random.nextFloat() - 0.5f) * cfg(c -> c.noiseDrift) * scale;
-        noiseYaw *= noiseDecay;
-        noisePitch *= noiseDecay;
-        noiseYaw = MathHelper.clamp(noiseYaw, -cfg(c -> c.noiseStrength), cfg(c -> c.noiseStrength));
-        noisePitch = MathHelper.clamp(noisePitch, -cfg(c -> c.noiseStrength), cfg(c -> c.noiseStrength));
+        float effectiveYaw   = targetYaw   + (yawDiff   > 0 ? overshootBias : -overshootBias);
+        float effectivePitch = targetPitch + (pitchDiff > 0 ? overshootBias * 0.5f : -overshootBias * 0.5f);
 
-        yawVelocity += (yawDiff + noiseYaw * noiseFactor) * cfg(c -> c.acceleration) * scale;
-        pitchVelocity += (pitchDiff + noisePitch * noiseFactor) * cfg(c -> c.acceleration) * scale;
+        if (totalDist < cfg.threshold) {
+            // Settled — kill velocity but don't reset target so it tracks movement
+            yawVelocity   = 0f;
+            pitchVelocity = 0f;
+            return;
+        }
 
-        yawVelocity = MathHelper.clamp(yawVelocity, -cfg(c -> c.maxVelocity), cfg(c -> c.maxVelocity));
-        pitchVelocity = MathHelper.clamp(pitchVelocity, -cfg(c -> c.maxVelocity), cfg(c -> c.maxVelocity));
+        float[] yawR   = springStep(player.getYaw(),   effectiveYaw,   yawVelocity,   thisSmoothing, deltaTime);
+        float[] pitchR = springStep(player.getPitch(), effectivePitch, pitchVelocity, thisSmoothing, deltaTime);
 
-        player.setYaw(player.getYaw() + yawVelocity * scale);
-        player.setPitch(player.getPitch() + pitchVelocity * scale);
+        // Clamp max movement per frame — prevents first-frame snap from far away
+        float yawDelta   = MathHelper.clamp(yawR[0],   -cfg.maxVelocity * deltaTime, cfg.maxVelocity * deltaTime);
+        float pitchDelta = MathHelper.clamp(pitchR[0], -cfg.maxVelocity * deltaTime, cfg.maxVelocity * deltaTime);
 
-        float frictionDecay = (float) Math.pow(cfg(c -> c.friction), scale * 20f);
-        float nearFactor = 1f - Math.min(1f, totalDist / 3f) * 0.15f;
-        yawVelocity *= frictionDecay * nearFactor;
-        pitchVelocity *= frictionDecay * nearFactor;
-    }
+        yawVelocity   = yawR[1];
+        pitchVelocity = pitchR[1];
 
-    public static void lookAt(@Nullable Vec3d entityPos, @Nullable BlockPos blockPos) {
-        lookAt(entityPos, blockPos, 1.0f);
+        player.setYaw(player.getYaw()     + yawDelta);
+        player.setPitch(player.getPitch() + pitchDelta);
     }
 
     public static void resetVelocity() {
-        yawVelocity = 0f;
-        pitchVelocity = 0f;
-        noiseYaw = 0f;
-        noisePitch = 0f;
+        yawVelocity    = 0f;
+        pitchVelocity  = 0f;
+        lastTargetBase = null;
+        reactionTimer  = 0f;
+        hasOvershot    = false;
     }
 
     public static boolean isLookingAt(String blockId) {
         MinecraftClient client = GeneralUtils.getClient();
         if (client.crosshairTarget == null) return false;
         if (client.crosshairTarget.getType() != HitResult.Type.BLOCK) return false;
-
-        BlockHitResult hitResult = (BlockHitResult) client.crosshairTarget;
-        Block block = client.world.getBlockState(hitResult.getBlockPos()).getBlock();
-        String id = Registries.BLOCK.getId(block).toString();
-
-        return id.equals(blockId);
+        BlockHitResult hit = (BlockHitResult) client.crosshairTarget;
+        Block block = client.world.getBlockState(hit.getBlockPos()).getBlock();
+        return Registries.BLOCK.getId(block).toString().equals(blockId);
     }
 }
